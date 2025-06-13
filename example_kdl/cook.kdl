@@ -1,0 +1,37 @@
+cp Caddyfile /opt/caddy/
+
+// // host root@localhost
+
+// host root@127.0.0.1
+// // date 2025-03-03
+// // date 2025-123
+// // htt
+
+
+// // fs:d//one/two/three
+// source foo=http://foo
+
+// package libpostgresql_foo
+// //package openssl
+
+// cp path/to/src path/to/dst
+
+// // cp alt/to/src alt/to/dst/
+
+// // dir path/ path/to/dst/
+
+// // file /opt/caddy/Caddyfile {
+// //     src = caddy/Caddyfile
+// //     mode = 744
+// //     contents = #"
+// //     "#
+// // }
+
+
+// package postgresql {
+//     resolve !arch=amd64 libpostgresql_foo;
+//     resolve os=linux
+//     resolve
+// }
+
+// resolve arch=amd64
