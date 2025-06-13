@@ -1,6 +1,10 @@
 mod apply;
+mod install;
 mod plan;
 mod run;
+mod ssh;
 pub use apply::*;
+pub use install::*;
 pub use plan::*;
 pub use run::*;
+pub use ssh::*;

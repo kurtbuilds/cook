@@ -22,32 +22,6 @@ pub enum FileType {
     },
 }
 
-impl std::cmp::PartialEq for FileType {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (
-                FileType::File {
-                    sha256: a,
-                    content: _,
-                },
-                FileType::File {
-                    sha256: b,
-                    content: _,
-                },
-            ) => {
-                if a.is_some() && b.is_some() {
-                    a == b
-                } else {
-                    false
-                }
-            }
-            (FileType::Directory, FileType::Directory) => true,
-            (FileType::Symlink { target: a }, FileType::Symlink { target: b }) => a == b,
-            _ => false,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FileContent {
     Content(String),
@@ -59,7 +33,9 @@ pub struct FileSpec {
     pub path: PathBuf,
     pub mode: u32,
     pub file_type: FileType,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner: Option<u32>, // UID
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<u32>, // GID
 }
 
