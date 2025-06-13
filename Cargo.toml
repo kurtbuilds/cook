@@ -1,4 +1,4 @@
 [workspace]
 resolver = "2"
-members = ["cli", "cook"]
+members = [ "agent","cli", "cook"]
 exclude = ["kdl", "example_rust", "example_kdl"]

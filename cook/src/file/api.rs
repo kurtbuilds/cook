@@ -57,7 +57,9 @@ impl File {
         if self.destination.to_str().unwrap().ends_with("/") {
             file_type = FileType::Directory;
         } else if let Some(src) = self.src.as_ref() {
-            let mut file = std::fs::File::open(src).expect("failed to open source file");
+            let Ok(mut file) = std::fs::File::open(src) else {
+                panic!("File does not exist: {}", src);
+            };
             let mut hasher = sha2::Sha256::new();
             std::io::copy(&mut file, &mut hasher).expect("failed to read source file");
             let hash = hasher.finalize();
@@ -97,6 +99,7 @@ impl File {
 impl Drop for File {
     fn drop(&mut self) {
         let spec = self.create_spec();
+        dbg!(&spec);
         FILE_SPEC.lock().unwrap().push(spec);
     }
 }
