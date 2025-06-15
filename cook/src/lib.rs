@@ -13,7 +13,6 @@ use std::{any::Any, fmt::Display};
 
 use ::kdl::KdlNode;
 use async_trait::async_trait;
-use erased_serde::Serialize;
 pub use file::api::*;
 pub use ghrelease::api::*;
 pub use host::*;
@@ -26,7 +25,7 @@ pub use context::Context;
 pub use global_state::{State, add_to_state, drop_last_rule};
 
 /// defines how to interact with a rule about a system/resource
-pub trait Rule: Serialize + Any {
+pub trait Rule: erased_serde::Serialize + Any {
     fn downcast_ssh(&self) -> Option<&dyn RuleOverSsh> {
         None
     }
@@ -51,7 +50,7 @@ pub trait RuleOverSsh: Rule {
 }
 
 /// defines how a rule will be applied to a system/resource
-pub trait Modification: Serialize + Display {
+pub trait Modification: erased_serde::Serialize + Display {
     fn downcast_ssh(&self) -> Option<&dyn ModificationOverSsh> {
         None
     }

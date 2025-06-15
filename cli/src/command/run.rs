@@ -93,9 +93,10 @@ impl Display for HostComplete {
     }
 }
 
-fn structured_output<T: erased_serde::Serialize + Display>(format: Format, data: &T) {
+fn structured_output<T: erased_serde::Serialize>(format: Format, data: &T) {
     match format {
-        Format::Human => eprintln!("{}", data),
+        // Format::Human => eprintln!("{}", data),
+        Format::Human => (),
         Format::Json => {
             let stdio = std::io::stdout();
             let mut serializer = serde_json::Serializer::new(stdio);
@@ -124,7 +125,8 @@ async fn run_over_ssh(cli: &Cli, session: Session, state: &State, host: &str) {
             m.apply_ssh(session.clone())
                 .await
                 .expect("Failed to apply rule");
-            structured_output(cli.format, &modification.as_ref());
+            let ser = modification.as_ref();
+            structured_output(cli.format, &ser);
         }
     }
 
