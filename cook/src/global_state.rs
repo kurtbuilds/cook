@@ -1,4 +1,4 @@
-use std::{any::Any, sync::Mutex};
+use std::{any::Any, io::Write, sync::Mutex};
 
 use crate::{Host, Rule};
 
@@ -65,7 +65,9 @@ pub fn drop_last_rule(identifier: &str) {
 
 extern "C" fn serialize_state_to_stdout() {
     let state = STATE.lock().unwrap();
-    state.serialize(std::io::stdout());
+    let mut stdout = std::io::stdout().lock();
+    state.serialize(&mut stdout);
+    stdout.write("\n".as_bytes());
 }
 
 #[cfg(feature = "atexit")]

@@ -1,13 +1,9 @@
-use std::{
-    fs, io,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+#[allow(unused)]
+use sha2::Digest;
+use std::{fs, path::PathBuf};
 
-use async_trait::async_trait;
 use kdl::KdlNode;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use crate::{Context, Error, File, Modification, ModificationOverSsh, Rule, RuleOverSsh, cp};
 
@@ -50,6 +46,7 @@ pub struct FileSpec {
 }
 
 impl Rule for FileSpec {
+    #[cfg(feature = "ssh")]
     fn downcast_ssh(&self) -> Option<&dyn crate::RuleOverSsh> {
         Some(self)
     }
@@ -171,7 +168,8 @@ impl Rule for FileSpec {
     }
 }
 
-#[async_trait]
+#[cfg(feature = "ssh")]
+#[async_trait::async_trait]
 impl RuleOverSsh for FileSpec {
     async fn check_ssh(
         &self,
@@ -186,7 +184,7 @@ impl RuleOverSsh for FileSpec {
                     .await;
                 if let Ok(output) = output {
                     let stdout = output.stdout;
-                    let mut hasher = Sha256::new();
+                    let mut hasher = sha2::Sha256::new();
                     hasher.update(stdout);
                     let hash = hasher.finalize();
                     let hash = format!("{:x}", hash);
@@ -293,6 +291,7 @@ impl std::fmt::Display for FileChange {
 }
 
 impl Modification for FileChange {
+    #[cfg(feature = "ssh")]
     fn downcast_ssh(&self) -> Option<&dyn ModificationOverSsh> {
         Some(self)
     }
@@ -310,9 +309,10 @@ impl Modification for FileChange {
     }
 }
 
-#[async_trait]
+#[cfg(feature = "ssh")]
+#[async_trait::async_trait]
 impl ModificationOverSsh for FileChange {
-    async fn apply_ssh(&self, session: Arc<openssh::Session>) -> Result<(), Error> {
+    async fn apply_ssh(&self, session: std::sync::Arc<openssh::Session>) -> Result<(), Error> {
         let sftp = openssh_sftp_client::Sftp::from_clonable_session(
             session.clone(),
             openssh_sftp_client::SftpOptions::new(),

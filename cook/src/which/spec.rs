@@ -1,10 +1,9 @@
 use std::fmt::Display;
 
-use async_trait::async_trait;
 use kdl::KdlNode;
 use serde::{Deserialize, Serialize};
 
-use crate::{Context, Error, Modification, ModificationOverSsh, Rule};
+use crate::{Context, Error, Modification, Rule};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WhichSpec {
@@ -47,7 +46,7 @@ impl Rule for WhichSpec {
         }
     }
 
-    fn check(&self) -> Result<Vec<Box<dyn Modification>>, crate::Error> {
+    fn check(&self) -> Result<Vec<Box<dyn Modification>>, Error> {
         let success = self.command().status()?.success();
         let result = if success {
             Vec::new()
@@ -75,13 +74,15 @@ impl Modification for WhichChange {
         todo!()
     }
 
+    #[cfg(feature = "ssh")]
     fn downcast_ssh(&self) -> Option<&dyn crate::ModificationOverSsh> {
         Some(self)
     }
 }
 
-#[async_trait]
-impl ModificationOverSsh for WhichChange {
+#[cfg(feature = "ssh")]
+#[async_trait::async_trait]
+impl crate::ModificationOverSsh for WhichChange {
     async fn apply_ssh(&self, _session: std::sync::Arc<openssh::Session>) -> Result<(), Error> {
         todo!()
     }

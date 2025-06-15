@@ -12,6 +12,7 @@ mod which;
 use std::{any::Any, fmt::Display};
 
 use ::kdl::KdlNode;
+use async_trait::async_trait;
 use erased_serde::Serialize;
 pub use file::api::*;
 pub use ghrelease::api::*;
@@ -19,10 +20,8 @@ pub use host::*;
 pub use kdl::parse_node;
 pub use package::api::*;
 pub use user::api::*;
-pub use user::api::*;
 pub use which::api::*;
 
-use async_trait::async_trait;
 pub use context::Context;
 pub use global_state::{State, add_to_state, drop_last_rule};
 
@@ -41,10 +40,10 @@ pub trait Rule: Serialize + Any {
     fn check(&self) -> Result<Vec<Box<dyn Modification>>, Error>;
 }
 
-#[cfg(feature = "ssh")]
 #[async_trait]
 pub trait RuleOverSsh: Rule {
     /// check the rule over ssh
+    #[cfg(feature = "ssh")]
     async fn check_ssh(
         &self,
         session: &openssh::Session,
@@ -60,9 +59,9 @@ pub trait Modification: Serialize + Display {
     fn apply(&self) -> Result<(), Error>;
 }
 
-#[cfg(feature = "ssh")]
 #[async_trait]
 pub trait ModificationOverSsh {
+    #[cfg(feature = "ssh")]
     async fn apply_ssh(&self, session: std::sync::Arc<openssh::Session>) -> Result<(), Error>;
 }
 

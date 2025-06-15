@@ -1,7 +1,6 @@
 use serde::Serialize;
 
 use crate::{Error, Modification, ModificationOverSsh};
-use async_trait::async_trait;
 
 #[derive(Serialize)]
 pub struct UserSpec {
@@ -22,16 +21,18 @@ impl std::fmt::Display for UserChange {
     }
 }
 impl Modification for UserChange {
-    fn apply(&self) -> Result<(), crate::Error> {
+    fn apply(&self) -> Result<(), Error> {
         todo!()
     }
 
+    #[cfg(feature = "ssh")]
     fn downcast_ssh(&self) -> Option<&dyn crate::ModificationOverSsh> {
         Some(self)
     }
 }
 
-#[async_trait]
+#[cfg(feature = "ssh")]
+#[async_trait::async_trait]
 impl ModificationOverSsh for UserChange {
     async fn apply_ssh(&self, _session: std::sync::Arc<openssh::Session>) -> Result<(), Error> {
         todo!()
