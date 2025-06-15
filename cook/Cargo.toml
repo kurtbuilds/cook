@@ -3,11 +3,22 @@ name = "cook"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["atexit"]
+# This turns on exit serialization. You must really know what you're doing if you disable this feature.
+atexit = []
+ssh = ["openssh", "openssh-sftp-client"]
+
 [dependencies]
-clap = { version = "4.5.40", features = ["derive"] }
 ctor = "0.4.2"
-kdl = "6.3.4"
+kdl.workspace = true
 libc = "0.2.172"
-serde = { version = "1.0.192", features = ["derive"] }
-serde_json = "1.0.123"
+serde.workspace = true
+serde_json.workspace = true
 sha2 = "0.10.9"
+openssh = { workspace = true, optional = true }
+openssh-sftp-client = { version = "0.15", optional = true, features = [
+    "openssh",
+] }
+async-trait = "0.1"
+erased-serde.workspace = true

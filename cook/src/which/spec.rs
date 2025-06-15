@@ -1,11 +1,16 @@
+use std::fmt::Display;
+
+use async_trait::async_trait;
+use kdl::KdlNode;
 use serde::{Deserialize, Serialize};
 
-use crate::{Apply, Check};
+use crate::{Context, Error, Modification, ModificationOverSsh, Rule};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WhichSpec {
     pub bin: String,
     pub script: Option<String>,
+    pub script_file: Option<String>,
 }
 
 impl WhichSpec {
@@ -16,32 +21,68 @@ impl WhichSpec {
     }
 }
 
-impl Check for WhichSpec {
-    fn check(&self) -> Result<Vec<Box<dyn Apply>>, crate::Error> {
+impl Rule for WhichSpec {
+    fn identifier(&self) -> &str {
+        &self.bin
+    }
+
+    fn from_kdl(node: &KdlNode, _context: &Context) -> Self {
+        assert_eq!(node.name().value(), "which");
+        let mut args = node.entries().iter();
+        let bin = args
+            .next()
+            .unwrap()
+            .value()
+            .as_string()
+            .expect("Expected a string")
+            .to_string();
+        let entry = args
+            .next()
+            .expect("which requires script or script_file to create the executable");
+        dbg!(entry);
+        WhichSpec {
+            bin,
+            script: None,
+            script_file: None,
+        }
+    }
+
+    fn check(&self) -> Result<Vec<Box<dyn Modification>>, crate::Error> {
         let success = self.command().status()?.success();
         let result = if success {
             Vec::new()
         } else {
             let change = WhichChange::RunScript(self.script.clone().unwrap());
-            let change: Box<dyn Apply> = Box::new(change);
+            let change: Box<dyn Modification> = Box::new(change);
             vec![change]
         };
         Ok(result)
     }
-    fn check_ssh(&self) -> Result<Vec<Box<dyn Apply>>, crate::Error> {
-        todo!()
-    }
 }
 
+#[derive(Serialize)]
 pub enum WhichChange {
     RunScript(String),
 }
 
-impl Apply for WhichChange {
+impl Display for WhichChange {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ran script for which")
+    }
+}
+impl Modification for WhichChange {
     fn apply(&self) -> Result<(), crate::Error> {
         todo!()
     }
-    fn apply_ssh(&self) -> Result<(), crate::Error> {
+
+    fn downcast_ssh(&self) -> Option<&dyn crate::ModificationOverSsh> {
+        Some(self)
+    }
+}
+
+#[async_trait]
+impl ModificationOverSsh for WhichChange {
+    async fn apply_ssh(&self, _session: std::sync::Arc<openssh::Session>) -> Result<(), Error> {
         todo!()
     }
 }

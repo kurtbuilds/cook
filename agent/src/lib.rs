@@ -9,4 +9,3 @@
 // thereafter, the ssh agent checks if the agent exists on the remote
 // cook apply
 pub mod local;
-pub mod ssh;

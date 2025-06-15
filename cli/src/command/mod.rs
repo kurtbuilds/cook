@@ -1,10 +1,10 @@
-mod apply;
 mod install;
-mod plan;
+mod preview;
 mod run;
 mod ssh;
-pub use apply::*;
+mod up;
 pub use install::*;
-pub use plan::*;
+pub use preview::*;
 pub use run::*;
 pub use ssh::*;
+pub use up::*;

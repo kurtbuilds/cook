@@ -1,0 +1,10 @@
+01jx3a7tg0af5f124c9x6x85eg.kurtbuilds.com {
+	@blocked {
+    	path /v1/api*
+    	not remote_ip 104.51.50.46
+    }
+
+	respond @blocked "Forbidden" 403
+
+	reverse_proxy :5000
+}

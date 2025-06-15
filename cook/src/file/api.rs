@@ -5,10 +5,12 @@ use std::{
 
 use sha2::Digest;
 
-use crate::file::spec::{FILE_SPEC, FileContent, FileSpec, FileType};
+use crate::{
+    add_to_state, drop_last_rule,
+    file::spec::{FileContent, FileSpec, FileType},
+};
 
 pub fn cp(src: impl AsRef<str>, destination: impl AsRef<str>) -> File {
-    // let path = Path::new(src.as_ref());
     let destination_str = destination.as_ref();
     let mut destination = Path::new(destination_str).to_owned();
     if destination_str.ends_with("/") {
@@ -48,11 +50,13 @@ impl File {
     }
 
     pub fn forget(self) {
+        let dest = self.destination.clone();
         std::mem::drop(self);
-        FILE_SPEC.lock().unwrap().pop();
+        drop_last_rule(dest.to_str().unwrap());
     }
 
-    pub(crate) fn create_spec(&mut self) -> FileSpec {
+    /// build the spec
+    pub fn build(&mut self) -> FileSpec {
         let file_type;
         if self.destination.to_str().unwrap().ends_with("/") {
             file_type = FileType::Directory;
@@ -66,24 +70,25 @@ impl File {
             let sha256 = format!("{:x}", hash);
             let path = fs::canonicalize(src).expect("failed to canonicalize path");
             file_type = FileType::File {
-                sha256: Some(sha256),
+                sha256: sha256,
                 content: FileContent::Path(path),
             };
         } else if self.content.is_some() {
             let content = std::mem::take(&mut self.content).unwrap();
+            let sha256 = format!("{:x}", sha2::Sha256::digest(content.as_bytes()));
             file_type = FileType::File {
-                sha256: None,
-                content: FileContent::Content(content),
+                sha256,
+                content: FileContent::Content(content.into_bytes()),
             };
         } else if let Some(link) = self.link.as_ref() {
-            file_type = FileType::File {
-                sha256: None,
-                content: FileContent::Content(link.to_string()),
+            file_type = FileType::Symlink {
+                target: link.to_string(),
             };
         } else {
+            let sha256 = format!("{:x}", sha2::Sha256::digest(Vec::new()));
             file_type = FileType::File {
-                sha256: None,
-                content: FileContent::Content("".to_string()),
+                sha256,
+                content: FileContent::Content(Vec::new()),
             };
         };
         FileSpec {
@@ -98,8 +103,9 @@ impl File {
 
 impl Drop for File {
     fn drop(&mut self) {
-        let spec = self.create_spec();
-        dbg!(&spec);
-        FILE_SPEC.lock().unwrap().push(spec);
+        if !std::thread::panicking() {
+            let spec = self.build();
+            add_to_state(spec);
+        }
     }
 }
