@@ -98,7 +98,11 @@ fn main() {
                 .block_on(async { run.run(&cli).await });
         }
         Command::Preview(_preview) => todo!(),
-        Command::Up(_up) => todo!(),
+        Command::Up(up) => {
+            tokio::runtime::Runtime::new()
+                .unwrap()
+                .block_on(async { up.run(&cli, state).await });
+        }
     }
 }
 

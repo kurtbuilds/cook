@@ -16,7 +16,7 @@ use async_trait::async_trait;
 pub use file::api::*;
 pub use ghrelease::api::*;
 pub use host::*;
-pub use kdl::parse_node;
+pub use kdl::add_node;
 pub use package::api::*;
 pub use user::api::*;
 pub use which::api::*;
@@ -25,7 +25,7 @@ pub use context::Context;
 pub use global_state::{State, add_to_state, drop_last_rule};
 
 /// defines how to interact with a rule about a system/resource
-pub trait Rule: erased_serde::Serialize + Any {
+pub trait Rule: erased_serde::Serialize + Any + std::fmt::Debug {
     fn downcast_ssh(&self) -> Option<&dyn RuleOverSsh> {
         None
     }

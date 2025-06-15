@@ -17,8 +17,7 @@ pub fn parse_kdl(content: &str, context: Context) -> State {
         }
     };
     for node in doc.nodes() {
-        let node = cook::parse_node(node, &context);
-        state.add_rule(node);
+        cook::add_node(node, &context, &mut state);
     }
     state
 }

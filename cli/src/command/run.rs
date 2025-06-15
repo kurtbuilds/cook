@@ -12,13 +12,13 @@ pub struct Run {
     command: Vec<String>,
 }
 
-async fn connect_ssh(host: &str) -> Session {
+pub async fn connect_ssh(host: &str) -> Session {
     Session::connect_mux(host, openssh::KnownHosts::Strict)
         .await
         .expect("Failed to connect to host")
 }
 
-async fn check_cook_agent(session: &Session) -> Option<String> {
+pub async fn check_cook_agent(session: &Session) -> Option<String> {
     let output = session
         .command("sh")
         .arg("-c")
@@ -93,7 +93,7 @@ impl Display for HostComplete {
     }
 }
 
-fn structured_output<T: erased_serde::Serialize>(format: Format, data: &T) {
+pub fn structured_output<T: erased_serde::Serialize + ?Sized>(format: Format, data: &T) {
     match format {
         // Format::Human => eprintln!("{}", data),
         Format::Human => (),
@@ -105,18 +105,17 @@ fn structured_output<T: erased_serde::Serialize>(format: Format, data: &T) {
     }
 }
 
-async fn run_over_ssh(cli: &Cli, session: Session, state: &State, host: &str) {
+pub async fn run_over_ssh(cli: &Cli, session: Session, state: &State, host: &str) {
     let mut count = 0;
+    let session = std::sync::Arc::new(session);
     for rule in state.rules() {
         let rule = rule.downcast_ssh().unwrap();
-        let modifications = rule.check_ssh(&session).await.expect("failed");
+        let modifications = rule.check_ssh(&*session).await.expect("failed");
         if modifications.is_empty() {
             let success = "[success]".green();
             eprintln!("{success} {host}: No modifications to run");
             return;
         }
-
-        let session = std::sync::Arc::new(session);
         count += modifications.len();
         for modification in modifications {
             let m = modification
@@ -125,8 +124,8 @@ async fn run_over_ssh(cli: &Cli, session: Session, state: &State, host: &str) {
             m.apply_ssh(session.clone())
                 .await
                 .expect("Failed to apply rule");
-            let ser = modification.as_ref();
-            structured_output(cli.format, &ser);
+            let ser: &dyn erased_serde::Serialize = modification.as_ref();
+            structured_output(cli.format, ser);
         }
     }
 

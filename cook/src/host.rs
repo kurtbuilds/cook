@@ -1,8 +1,6 @@
 use ::kdl::KdlNode;
 use serde::{Deserialize, Serialize};
 
-use crate::{Context, Rule};
-
 pub fn host(hostname: impl AsRef<str>) -> Host {
     Host {
         name: hostname.as_ref().to_string(),
@@ -22,12 +20,7 @@ impl Host {
     pub fn name(&self) -> &str {
         &self.name
     }
-}
-impl Rule for Host {
-    fn from_kdl(node: &KdlNode, _context: &Context) -> Self
-    where
-        Self: Sized,
-    {
+    pub fn from_kdl(node: &KdlNode) -> Self {
         assert_eq!(node.name().value(), "host");
         let entry = node.entry(0).expect("No host found");
         let host = entry
@@ -39,13 +32,5 @@ impl Rule for Host {
             name: host,
             roles: Vec::new(),
         }
-    }
-
-    fn check(&self) -> Result<Vec<Box<dyn crate::Modification>>, crate::Error> {
-        Ok(Vec::new())
-    }
-
-    fn identifier(&self) -> &str {
-        &self.name
     }
 }

@@ -4,13 +4,19 @@ use crate::{Host, Rule};
 
 pub struct State {
     global_rules: Vec<Box<dyn Rule + Send + Sync + 'static>>,
+    hosts: Vec<Host>,
 }
 
 impl State {
     pub const fn new() -> Self {
         Self {
             global_rules: Vec::new(),
+            hosts: Vec::new(),
         }
+    }
+
+    pub fn add_host(&mut self, host: Host) {
+        self.hosts.push(host);
     }
 
     pub fn rules(&self) -> &[Box<dyn Rule + Send + Sync + 'static>] {
@@ -26,24 +32,17 @@ impl State {
         }
     }
 
-    pub fn add_rule(&mut self, rule: Box<dyn Rule + Send + Sync + 'static>) {
-        self.global_rules.push(rule);
+    pub fn add_rule(&mut self, rule: impl Rule + Send + Sync + 'static) {
+        self.global_rules.push(Box::new(rule));
     }
 
     pub fn merge(&mut self, other: State) {
         self.global_rules.extend(other.global_rules);
+        self.hosts.extend(other.hosts);
     }
 
     pub fn hosts(&self) -> Vec<String> {
-        self.global_rules
-            .iter()
-            .filter_map(|rule| {
-                let rule = rule.as_ref();
-                let rule = rule as &dyn Any;
-                rule.downcast_ref::<Host>().map(|h| h.name().to_string())
-            })
-            // .map(|h| h.name().to_string())
-            .collect::<Vec<_>>()
+        self.hosts.iter().map(|h| h.name().to_string()).collect()
     }
 }
 
