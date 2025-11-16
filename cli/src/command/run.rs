@@ -111,11 +111,6 @@ pub async fn run_over_ssh(cli: &Cli, session: Session, state: &State, host: &str
     for rule in state.rules() {
         let rule = rule.downcast_ssh().unwrap();
         let modifications = rule.check_ssh(&*session).await.expect("failed");
-        if modifications.is_empty() {
-            let success = "[success]".green();
-            eprintln!("{success} {host}: No modifications to run");
-            return;
-        }
         count += modifications.len();
         for modification in modifications {
             let m = modification
@@ -128,13 +123,15 @@ pub async fn run_over_ssh(cli: &Cli, session: Session, state: &State, host: &str
             structured_output(cli.format, ser);
         }
     }
-
-    structured_output(
-        cli.format,
-        &HostComplete {
+    if count == 0 {
+        let success = "[success]".green();
+        eprintln!("{success} {host}: No modifications to run");
+    } else {
+        let output = HostComplete {
             host: host.to_string(),
             completed: true,
             modifications: count,
-        },
-    );
+        };
+        structured_output(cli.format, &output);
+    }
 }

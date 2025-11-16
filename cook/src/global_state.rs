@@ -1,7 +1,8 @@
-use std::{any::Any, io::Write, sync::Mutex};
+use std::{io::Write, sync::Mutex};
 
 use crate::{Host, Rule};
 
+#[derive(Debug)]
 pub struct State {
     global_rules: Vec<Box<dyn Rule + Send + Sync + 'static>>,
     hosts: Vec<Host>,

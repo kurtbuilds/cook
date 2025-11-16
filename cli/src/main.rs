@@ -144,6 +144,15 @@ fn build_state(root: &Path) -> State {
         } else if file_name == "main.ts" {
         } else if file_name == "main.js" {
         } else if file_name == "Cargo.toml" {
+            let Ok(content) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            if content.contains("[workspace]") || !content.contains("\ncook =") {
+                continue;
+            }
+            // let contezt = Context::new(root, Some(path));
+            // let s = kdl::parse_kdl(&content, contezt);
+            // state.merge(s);
         }
     }
     state

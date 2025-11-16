@@ -38,7 +38,6 @@ impl Rule for WhichSpec {
         let entry = args
             .next()
             .expect("which requires script or script_file to create the executable");
-        dbg!(entry);
         WhichSpec {
             bin,
             script: None,
