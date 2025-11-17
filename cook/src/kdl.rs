@@ -1,14 +1,14 @@
 use kdl::KdlNode;
 
-use crate::{Context, Host, Rule, State, file::spec::FileSpec};
+use crate::{Context, State};
 
 pub fn add_node(node: &KdlNode, context: &Context, state: &mut State) {
-    match node.name().value() {
-        "host" => {
-            let host = Host::from_kdl(node);
-            state.add_host(host);
+    let value = node.name().value();
+    for (keyword, add_rules_to_state) in context.kdl_rule_deserializers.iter() {
+        if *keyword == value {
+            add_rules_to_state(state, node, context);
+            return;
         }
-        "file" | "cp" => state.add_rule(FileSpec::from_kdl(node, context)),
-        _ => panic!("unknown rule type: {}", node.name().value()),
     }
+    panic!("Unknown rule type: {}", value);
 }

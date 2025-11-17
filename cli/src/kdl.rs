@@ -7,11 +7,7 @@ pub fn parse_kdl(content: &str, context: Context) -> State {
         Ok(doc) => doc,
         Err(err) => {
             for d in &err.diagnostics {
-                if let Some(path) = &context.file {
-                    println!("{}: {}", path.display(), d);
-                } else {
-                    println!("{}", d);
-                }
+                println!("{}", d);
             }
             panic!("Failed to parse KDL document");
         }

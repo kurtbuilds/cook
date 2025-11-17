@@ -39,10 +39,7 @@ impl Run {
             panic!("No command to run");
         }
         let command = self.command.join(" ");
-        let context = Context {
-            root: PathBuf::from(&cli.root),
-            file: None,
-        };
+        let context = Context::new(&cli.root);
         let state = parse_kdl(&command, context);
 
         match cli.method {
@@ -96,7 +93,11 @@ impl Display for HostComplete {
 pub fn structured_output<T: erased_serde::Serialize + ?Sized>(format: Format, data: &T) {
     match format {
         // Format::Human => eprintln!("{}", data),
-        Format::Human => (),
+        Format::Human => {
+            let stdio = std::io::stdout();
+            let mut serializer = serde_json::Serializer::new(stdio);
+            erased_serde::serialize(data, &mut serializer).expect("Failed to serialize data");
+        }
         Format::Json => {
             let stdio = std::io::stdout();
             let mut serializer = serde_json::Serializer::new(stdio);
@@ -113,12 +114,8 @@ pub async fn run_over_ssh(cli: &Cli, session: Session, state: &State, host: &str
         let modifications = rule.check_ssh(&*session).await.expect("failed");
         count += modifications.len();
         for modification in modifications {
-            let m = modification
-                .downcast_ssh()
-                .expect("Cannot apply rule over ssh");
-            m.apply_ssh(session.clone())
-                .await
-                .expect("Failed to apply rule");
+            let m = modification.downcast_ssh().expect("Cannot apply rule over ssh");
+            m.apply_ssh(session.clone()).await.expect("Failed to apply rule");
             let ser: &dyn erased_serde::Serialize = modification.as_ref();
             structured_output(cli.format, ser);
         }

@@ -22,22 +22,10 @@ pub enum Format {
 #[command(version, about)]
 struct Cli {
     /// Enable debug mode, print output from commands
-    #[clap(
-        short,
-        long,
-        env = "COOK_DEBUG",
-        global = true,
-        default_value = "false"
-    )]
+    #[clap(short, long, env = "COOK_DEBUG", global = true, default_value = "false")]
     debug: bool,
     /// output format
-    #[clap(
-        short,
-        long,
-        env = "COOK_FORMAT",
-        global = true,
-        default_value = "human"
-    )]
+    #[clap(short, long, env = "COOK_FORMAT", global = true, default_value = "human")]
     format: Format,
     /// path to javascript interpreter if compiling a cook javascript project
     javascript: Option<String>,
@@ -49,7 +37,7 @@ struct Cli {
     ///
     #[clap(long, env = "COOK_METHOD", global = true, default_value = "auto")]
     method: Method,
-    /// Where to calculate paths relative to
+    /// Where to calculate paths relative to (on the local (orchestrator) file system)
     #[clap(long, env = "COOK_ROOT", global = true, default_value = ".")]
     root: String,
     /// Specify a specific host to operate on
@@ -137,7 +125,7 @@ fn build_state(root: &Path) -> State {
             .expect("extension is not a valid string");
         if file_name == "Cookfile" || extension == "kdl" {
             let content = std::fs::read_to_string(&path).expect("Failed to read file");
-            let contezt = Context::new(root, Some(path));
+            let contezt = Context::new(root);
             let s = kdl::parse_kdl(&content, contezt);
             state.merge(s);
         } else if file_name == "main.py" {

@@ -6,7 +6,7 @@ pub fn which(bin: impl AsRef<str>, script: impl AsRef<str>) -> Which {
 }
 
 pub struct Which {
-    bin: String,
+    pub bin: String,
     pub script: Option<String>,
 }
 

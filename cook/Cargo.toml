@@ -10,9 +10,9 @@ atexit = []
 ssh = ["openssh", "openssh-sftp-client"]
 
 [dependencies]
-ctor = "0.4.2"
+ctor = "0.4.3"
 kdl.workspace = true
-libc = "0.2.172"
+libc = "0.2.177"
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10.9"
@@ -22,3 +22,6 @@ openssh-sftp-client = { version = "0.15", optional = true, features = [
 ] }
 async-trait = "0.1"
 erased-serde.workspace = true
+typetag.workspace = true
+anyhow.workspace = true
+walkdir.workspace = true

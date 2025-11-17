@@ -3,7 +3,7 @@ pub fn package(name: impl AsRef<str>) -> Package {
 }
 
 pub struct Package {
-    name: String,
+    pub name: String,
 }
 
 impl Package {

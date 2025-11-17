@@ -1,40 +1,39 @@
-mod cargo;
 mod context;
 mod file;
-mod ghrelease;
 mod global_state;
 mod host;
 mod kdl;
 mod package;
+mod service;
 mod user;
 mod which;
-
-use std::{any::Any, fmt::Display};
 
 use ::kdl::KdlNode;
 use async_trait::async_trait;
 pub use file::api::*;
-pub use ghrelease::api::*;
 pub use host::*;
 pub use kdl::add_node;
 pub use package::api::*;
+pub use service::api::*;
 pub use user::api::*;
 pub use which::api::*;
 
 pub use context::Context;
-pub use global_state::{State, add_to_state, drop_last_rule};
+pub use global_state::State;
+
+pub trait FromKdl {
+    fn kdl_keywords() -> &'static [&'static str];
+    /// create the spec from a kdl node
+    fn add_rules_to_state(state: &mut State, node: &KdlNode, context: &Context);
+}
 
 /// defines how to interact with a rule about a system/resource
-pub trait Rule: erased_serde::Serialize + Any + std::fmt::Debug {
+pub trait Rule: erased_serde::Serialize + std::fmt::Debug + Send + Sync + 'static {
     fn downcast_ssh(&self) -> Option<&dyn RuleOverSsh> {
         None
     }
     /// a unique identifier for the rule, used for debugging but not used in the implementation
     fn identifier(&self) -> &str;
-    /// create the rule from a kdl node
-    fn from_kdl(node: &KdlNode, context: &Context) -> Self
-    where
-        Self: Sized;
     /// check the rule
     fn check(&self) -> Result<Vec<Box<dyn Modification>>, Error>;
 }
@@ -43,19 +42,21 @@ pub trait Rule: erased_serde::Serialize + Any + std::fmt::Debug {
 pub trait RuleOverSsh: Rule {
     /// check the rule over ssh
     #[cfg(feature = "ssh")]
-    async fn check_ssh(
-        &self,
-        session: &openssh::Session,
-    ) -> Result<Vec<Box<dyn Modification>>, Error>;
+    async fn check_ssh(&self, session: &openssh::Session) -> Result<Vec<Box<dyn Modification>>, Error>;
 }
 
 /// defines how a rule will be applied to a system/resource
-pub trait Modification: erased_serde::Serialize + Display {
+pub trait Modification: erased_serde::Serialize {
     fn downcast_ssh(&self) -> Option<&dyn ModificationOverSsh> {
         None
     }
+
     /// check the rule over ssh
     fn apply(&self) -> Result<(), Error>;
+
+    fn fmt_human_readable(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result;
+
+    fn fmt_json(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result;
 }
 
 #[async_trait]

@@ -3,7 +3,7 @@ pub fn user(user: impl AsRef<str>) -> User {
 }
 
 pub struct User {
-    user: String,
+    pub user: String,
     pub no_login: bool,
     pub home: Option<String>,
     pub shell: Option<String>,
