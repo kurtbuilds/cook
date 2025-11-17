@@ -8,6 +8,8 @@ use crate::{Error, FromKdl, Modification, ModificationOverSsh, Rule, RuleOverSsh
 pub struct ServiceSpec {
     pub name: String,
     pub service_file_content: String,
+    pub start: bool,
+    pub owner: Option<String>,
 }
 
 impl FromKdl for ServiceSpec {
@@ -20,10 +22,22 @@ impl FromKdl for ServiceSpec {
         let service_file_path = entries.next().unwrap().expect_str();
         let path = context.local_path(service_file_path);
         let service_file_content = fs::read_to_string(path).expect("Failed to read service file");
+        let mut start = true;
+        let mut owner = None;
+        while let Some(e) = entries.next() {
+            match e.name().expect("Failed to get node name").value() {
+                "start" => start = e.value().as_bool().expect("Value for start is not a bool"),
+                "owner" => owner = Some(e.expect_str().to_string()),
+                z => panic!("Unexpected option for service: {}", z),
+            }
+        }
+        // let config = entries.next()
 
         state.add_rule(ServiceSpec {
             name,
             service_file_content,
+            start,
+            owner,
         });
     }
 }
@@ -53,6 +67,7 @@ pub struct NewService {
     pub name: String,
     pub service_file_content: String,
     pub service_file_content_sha256: String,
+    pub start: bool,
 }
 
 #[cfg(feature = "ssh")]
@@ -82,6 +97,7 @@ impl RuleOverSsh for ServiceSpec {
                 name: self.name.clone(),
                 service_file_content: self.service_file_content.clone(),
                 service_file_content_sha256,
+                start: self.start,
             }))]);
         }
 
@@ -112,6 +128,7 @@ impl RuleOverSsh for ServiceSpec {
                 name: self.name.clone(),
                 service_file_content: self.service_file_content.clone(),
                 service_file_content_sha256: local_sha256,
+                start: self.start,
             }))]);
         } else {
             Ok(vec![])
@@ -149,19 +166,20 @@ impl ModificationOverSsh for ServiceChange {
                 let mut f = sftp.create(file_path).await?;
                 f.write_all(service.service_file_content.as_bytes()).await?;
                 f.close().await?;
-                let success = session
-                    .command("ser")
-                    .arg("restart")
-                    .arg(&service.name)
-                    .output()
-                    .await?
-                    .status
-                    .success();
-                if !success {
-                    Err(anyhow::anyhow!("Failed to restart service").into_boxed_dyn_error())
-                } else {
-                    Ok(())
+                if service.start {
+                    let success = session
+                        .command("ser")
+                        .arg("start")
+                        .arg(&service.name)
+                        .output()
+                        .await?
+                        .status
+                        .success();
+                    if !success {
+                        return Err(anyhow::anyhow!("Failed to restart service").into_boxed_dyn_error());
+                    }
                 }
+                Ok(())
             }
         }
     }

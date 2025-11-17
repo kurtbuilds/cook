@@ -10,7 +10,7 @@ atexit = []
 ssh = ["openssh", "openssh-sftp-client"]
 
 [dependencies]
-ctor = "0.4.3"
+ctor = "0.6"
 kdl.workspace = true
 libc = "0.2.177"
 serde.workspace = true
