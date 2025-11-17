@@ -1,6 +1,8 @@
 use ::kdl::KdlNode;
 use serde::{Deserialize, Serialize};
 
+use crate::FromKdl;
+
 pub fn host(hostname: impl AsRef<str>) -> Host {
     Host {
         name: hostname.as_ref().to_string(),
@@ -20,17 +22,19 @@ impl Host {
     pub fn name(&self) -> &str {
         &self.name
     }
-    pub fn from_kdl(node: &KdlNode) -> Self {
-        assert_eq!(node.name().value(), "host");
-        let entry = node.entry(0).expect("No host found");
-        let host = entry
-            .value()
-            .as_string()
-            .expect("Host is not a string")
-            .to_string();
-        Host {
+}
+impl FromKdl for Host {
+    fn kdl_keywords() -> &'static [&'static str] {
+        &["host"]
+    }
+
+    fn add_rules_to_state(state: &mut crate::State, node: &KdlNode, _context: &crate::Context) {
+        let entry = node.entries().iter().next().expect("No host found");
+        let host = entry.value().expect_str().to_string();
+        let host = Host {
             name: host,
             roles: Vec::new(),
-        }
+        };
+        state.add_host(host);
     }
 }

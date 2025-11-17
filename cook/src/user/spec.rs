@@ -34,7 +34,7 @@ impl Rule for UserSpec {
         Some(self)
     }
     fn identifier(&self) -> &str {
-        todo!()
+        self.name.as_str()
     }
 
     fn check(&self) -> Result<Vec<Box<dyn Modification>>, Error> {
@@ -64,13 +64,6 @@ pub enum UserChange {
     Add(UserSpec),
 }
 
-impl std::fmt::Display for UserChange {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            UserChange::Add(_user) => write!(f, "Add"),
-        }
-    }
-}
 impl Modification for UserChange {
     fn apply(&self) -> Result<(), Error> {
         todo!()
@@ -94,6 +87,19 @@ impl Modification for UserChange {
 #[async_trait::async_trait]
 impl ModificationOverSsh for UserChange {
     async fn apply_ssh(&self, _session: std::sync::Arc<openssh::Session>) -> Result<(), Error> {
-        todo!()
+        match self {
+            UserChange::Add(user_spec) => {
+                let mut cmd = _session.command("useradd");
+                if user_spec.is_login {
+                    cmd.arg("-m");
+                }
+                cmd.arg(&user_spec.name);
+                let output = cmd.output().await?;
+                if !output.status.success() {
+                    return Err(anyhow::anyhow!("Failed to add user").into_boxed_dyn_error());
+                }
+                Ok(())
+            }
+        }
     }
 }

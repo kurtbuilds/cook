@@ -21,6 +21,11 @@ pub use which::api::*;
 pub use context::Context;
 pub use global_state::State;
 
+use crate::{
+    file::spec::FileSpec, package::spec::PackageSpec, service::spec::ServiceSpec, user::spec::UserSpec,
+    which::spec::WhichSpec,
+};
+
 pub trait FromKdl {
     fn kdl_keywords() -> &'static [&'static str];
     /// create the spec from a kdl node
@@ -46,7 +51,7 @@ pub trait RuleOverSsh: Rule {
 }
 
 /// defines how a rule will be applied to a system/resource
-pub trait Modification: erased_serde::Serialize {
+pub trait Modification: erased_serde::Serialize + Send + Sync + 'static {
     fn downcast_ssh(&self) -> Option<&dyn ModificationOverSsh> {
         None
     }
@@ -75,4 +80,13 @@ impl VecDyn for Vec<Box<dyn Modification>> {
     fn push_boxed(&mut self, item: impl Modification + 'static) {
         self.push(Box::new(item));
     }
+}
+
+pub fn add_kdl_deserializers_to_context(cx: &mut Context) {
+    cx.add_deserializers_for_keywords(FileSpec::kdl_keywords(), FileSpec::add_rules_to_state);
+    cx.add_deserializers_for_keywords(Host::kdl_keywords(), Host::add_rules_to_state);
+    cx.add_deserializers_for_keywords(ServiceSpec::kdl_keywords(), ServiceSpec::add_rules_to_state);
+    cx.add_deserializers_for_keywords(UserSpec::kdl_keywords(), UserSpec::add_rules_to_state);
+    cx.add_deserializers_for_keywords(WhichSpec::kdl_keywords(), WhichSpec::add_rules_to_state);
+    cx.add_deserializers_for_keywords(PackageSpec::kdl_keywords(), PackageSpec::add_rules_to_state);
 }

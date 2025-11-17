@@ -1,7 +1,8 @@
 use std::path::Path;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use cook::{Context, State};
+use cook::{Context, State, add_kdl_deserializers_to_context};
+use tracing::level_filters::LevelFilter;
 mod command;
 mod kdl;
 
@@ -22,8 +23,8 @@ pub enum Format {
 #[command(version, about)]
 struct Cli {
     /// Enable debug mode, print output from commands
-    #[clap(short, long, env = "COOK_DEBUG", global = true, default_value = "false")]
-    debug: bool,
+    #[clap(short, long, global = true, default_value = "false")]
+    verbose: bool,
     /// output format
     #[clap(short, long, env = "COOK_FORMAT", global = true, default_value = "human")]
     format: Format,
@@ -67,6 +68,10 @@ fn main() {
     let state = build_state(path);
     if cli.host.is_empty() {
         cli.host = state.hosts();
+    }
+
+    if cli.verbose {
+        tracing_subscriber::fmt().with_max_level(LevelFilter::DEBUG).init();
     }
 
     match &cli.command {
@@ -125,8 +130,9 @@ fn build_state(root: &Path) -> State {
             .expect("extension is not a valid string");
         if file_name == "Cookfile" || extension == "kdl" {
             let content = std::fs::read_to_string(&path).expect("Failed to read file");
-            let contezt = Context::new(root);
-            let s = kdl::parse_kdl(&content, contezt);
+            let mut cx = Context::new(root);
+            add_kdl_deserializers_to_context(&mut cx);
+            let s = kdl::parse_kdl(&content, cx);
             state.merge(s);
         } else if file_name == "main.py" {
         } else if file_name == "main.ts" {

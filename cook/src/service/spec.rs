@@ -120,6 +120,10 @@ impl RuleOverSsh for ServiceSpec {
 }
 
 impl Modification for ServiceChange {
+    fn downcast_ssh(&self) -> Option<&dyn ModificationOverSsh> {
+        Some(self)
+    }
+
     fn apply(&self) -> Result<(), Error> {
         todo!()
     }
@@ -145,8 +149,20 @@ impl ModificationOverSsh for ServiceChange {
                 let mut f = sftp.create(file_path).await?;
                 f.write_all(service.service_file_content.as_bytes()).await?;
                 f.close().await?;
+                let success = session
+                    .command("ser")
+                    .arg("restart")
+                    .arg(&service.name)
+                    .output()
+                    .await?
+                    .status
+                    .success();
+                if !success {
+                    Err(anyhow::anyhow!("Failed to restart service").into_boxed_dyn_error())
+                } else {
+                    Ok(())
+                }
             }
         }
-        Ok(())
     }
 }

@@ -1,11 +1,11 @@
-use std::{io::Write, sync::Mutex};
+// use std::{io::Write, sync::Mutex};
 
 use crate::{Host, Rule};
 
 #[derive(Debug)]
 pub struct State {
     // rules that are applied to infra. e.g. dns, network, node/host existence, etc.
-    infra_rules: Vec<Box<dyn Rule>>,
+    _infra_rules: Vec<Box<dyn Rule>>,
     // rules that are applied to hosts. e.g. package installation, ssh, sudo, etc.
     // TODO add regex rules to make sure we only apply rules to hosts that match certain patterns
     host_rules: Vec<Box<dyn Rule>>,
@@ -17,7 +17,7 @@ impl State {
         Self {
             host_rules: Vec::new(),
             hosts: Vec::new(),
-            infra_rules: Vec::new(),
+            _infra_rules: Vec::new(),
         }
     }
 
@@ -51,36 +51,36 @@ impl State {
     }
 }
 
-static STATE: Mutex<State> = Mutex::new(State::new());
+// static STATE: Mutex<State> = Mutex::new(State::new());
 
 // pub fn add_to_state(rule: impl Rule) {
 //     STATE.lock().unwrap().host_rules.push(Box::new(rule));
 // }
 
-pub fn drop_last_rule(identifier: &str) {
-    let Some(rule) = STATE.lock().unwrap().host_rules.pop() else {
-        panic!("No last rule to drop");
-    };
-    let id = rule.identifier();
-    if id != identifier {
-        panic!("Dropped rule {id}, but expected to drop rule {identifier}");
-    }
-}
+// pub fn drop_last_rule(identifier: &str) {
+//     let Some(rule) = STATE.lock().unwrap().host_rules.pop() else {
+//         panic!("No last rule to drop");
+//     };
+//     let id = rule.identifier();
+//     if id != identifier {
+//         panic!("Dropped rule {id}, but expected to drop rule {identifier}");
+//     }
+// }
 
-extern "C" fn serialize_state_to_stdout() {
-    let state = STATE.lock().unwrap();
-    let mut stdout = std::io::stdout().lock();
-    state.serialize(&mut stdout);
-    stdout.write("\n".as_bytes()).unwrap();
-}
+// extern "C" fn serialize_state_to_stdout() {
+//     let state = STATE.lock().unwrap();
+//     let mut stdout = std::io::stdout().lock();
+//     state.serialize(&mut stdout);
+//     stdout.write("\n".as_bytes()).unwrap();
+// }
 
-#[cfg(feature = "atexit")]
-#[ctor::ctor]
-fn register_at_exit() {
-    unsafe {
-        let result = libc::atexit(serialize_state_to_stdout);
-        if result != 0 {
-            panic!("Failed to register cook serialization on atexit");
-        }
-    }
-}
+// #[cfg(feature = "atexit")]
+// #[ctor::ctor]
+// fn register_at_exit() {
+//     unsafe {
+//         let result = libc::atexit(serialize_state_to_stdout);
+//         if result != 0 {
+//             panic!("Failed to register cook serialization on atexit");
+//         }
+//     }
+// }

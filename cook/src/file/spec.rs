@@ -103,7 +103,7 @@ impl Rule for FileSpec {
     }
 
     fn identifier(&self) -> &str {
-        todo!()
+        self.path.to_str().unwrap()
     }
 }
 
@@ -111,6 +111,7 @@ impl Rule for FileSpec {
 #[async_trait::async_trait]
 impl RuleOverSsh for FileSpec {
     async fn check_ssh(&self, session: &openssh::Session) -> Result<Vec<Box<dyn Modification>>, Error> {
+        let mut changes: Vec<Box<dyn Modification>> = Vec::new();
         match &self.content {
             FileContent::Content(_, sha256) => {
                 let output = session
@@ -118,20 +119,16 @@ impl RuleOverSsh for FileSpec {
                     .arg(self.path.to_str().unwrap())
                     .output()
                     .await?;
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let Some(remote_hash) = stdout.split_whitespace().next() else {
-                    return Err(anyhow::anyhow!("Failed to retrieve remote hash").into_boxed_dyn_error());
-                };
-                if sha256 == remote_hash {
-                    Ok(Vec::new())
-                } else {
-                    Ok(vec![Box::new(FileChange::MissingFile(MissingFile {
+                let output = String::from_utf8_lossy(&output.stdout);
+                let remote_hash = output.split_whitespace().next().unwrap_or_default();
+                if sha256 != remote_hash {
+                    changes.push(Box::new(FileChange::MissingFile(MissingFile {
                         path: self.path.clone(),
                         content: self.content.clone(),
                         owner: self.owner.clone(),
                         group: self.group.clone(),
                         mode: self.mode.clone(),
-                    }))])
+                    })));
                 }
             }
             FileContent::Url(_) => {
@@ -141,19 +138,18 @@ impl RuleOverSsh for FileSpec {
                     .arg(self.path.to_str().unwrap())
                     .output()
                     .await?;
-                if output.status.success() {
-                    Ok(Vec::new())
-                } else {
-                    Ok(vec![Box::new(FileChange::MissingFile(MissingFile {
+                if !output.status.success() {
+                    changes.push(Box::new(FileChange::MissingFile(MissingFile {
                         path: self.path.clone(),
                         content: self.content.clone(),
                         owner: self.owner.clone(),
                         group: self.group.clone(),
                         mode: self.mode.clone(),
-                    }))])
+                    })));
                 }
             }
         }
+        Ok(changes)
     }
 }
 
@@ -165,12 +161,6 @@ pub struct MissingFile {
     owner: Option<u32>,
     group: Option<u32>,
     mode: u32,
-}
-
-#[derive(Debug, Serialize)]
-pub enum MissingFileContents {
-    Bytes(Vec<u8>),
-    Url(String),
 }
 
 // #[derive(Debug, Serialize)]

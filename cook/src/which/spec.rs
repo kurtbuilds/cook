@@ -3,7 +3,7 @@ use std::fmt::Display;
 use kdl::KdlNode;
 use serde::{Deserialize, Serialize};
 
-use crate::{Context, Error, FromKdl, Modification, Rule};
+use crate::{Context, Error, FromKdl, Modification, Rule, RuleOverSsh};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WhichSpec {
@@ -37,6 +37,10 @@ impl FromKdl for WhichSpec {
 }
 
 impl Rule for WhichSpec {
+    #[cfg(feature = "ssh")]
+    fn downcast_ssh(&self) -> Option<&dyn crate::RuleOverSsh> {
+        Some(self)
+    }
     fn identifier(&self) -> &str {
         &self.bin
     }
@@ -51,6 +55,21 @@ impl Rule for WhichSpec {
             vec![change]
         };
         Ok(result)
+    }
+}
+
+#[cfg(feature = "ssh")]
+#[async_trait::async_trait]
+impl RuleOverSsh for WhichSpec {
+    async fn check_ssh(&self, session: &openssh::Session) -> Result<Vec<Box<dyn Modification>>, Error> {
+        let mut changes: Vec<Box<dyn Modification>> = Vec::new();
+        let success = session.command("which").arg(&self.bin).output().await?.status.success();
+        if !success {
+            let change = WhichChange::RunScript(self.script.clone().unwrap());
+            let change: Box<dyn Modification> = Box::new(change);
+            changes.push(change);
+        }
+        Ok(changes)
     }
 }
 

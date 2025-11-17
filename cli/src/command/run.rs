@@ -3,7 +3,8 @@ use colored::Colorize;
 use cook::State;
 use openssh::Session;
 use serde::Serialize;
-use std::{fmt::Display, path::PathBuf};
+use std::fmt::Display;
+use tracing::debug;
 
 use crate::{Cli, Context, Format, Method, kdl::parse_kdl};
 
@@ -110,11 +111,13 @@ pub async fn run_over_ssh(cli: &Cli, session: Session, state: &State, host: &str
     let mut count = 0;
     let session = std::sync::Arc::new(session);
     for rule in state.rules() {
-        let rule = rule.downcast_ssh().unwrap();
+        debug!(rule_id = rule.identifier(), "Checking rule");
+        let rule = rule.downcast_ssh().expect("Failed to downcast rule");
+
         let modifications = rule.check_ssh(&*session).await.expect("failed");
         count += modifications.len();
         for modification in modifications {
-            let m = modification.downcast_ssh().expect("Cannot apply rule over ssh");
+            let m = modification.downcast_ssh().expect("Cannot apply modification over ssh");
             m.apply_ssh(session.clone()).await.expect("Failed to apply rule");
             let ser: &dyn erased_serde::Serialize = modification.as_ref();
             structured_output(cli.format, ser);
