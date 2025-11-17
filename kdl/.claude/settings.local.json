@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rg:*)",
+      "Bash(grep:*)",
+      "Bash(cargo test:*)",
+      "Bash(rustc:*)",
+      "Bash(./test_identifiers)",
+      "Bash(cargo:*)",
+      "Bash(find:*)",
+      "Bash(rm:*)",
+      "Bash(ls:*)",
+      "Bash(mv:*)",
+      "Bash(cat:*)",
+      "Bash(echo:*)",
+      "Bash(/tmp:*)",
+      "Bash(./test_url)",
+      "Bash(./target/debug/examples/custom-errors:*)",
+      "Bash(./test_parsing)"
+    ],
+    "deny": []
+  }
+}

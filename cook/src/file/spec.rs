@@ -69,6 +69,25 @@ impl FromKdl for FileSpec {
                 let src = context.local_path(args.next().unwrap().expect_str());
                 let dst_str = args.next().unwrap().expect_str();
                 let mut dst = PathBuf::from(dst_str);
+                let mut includes: Vec<String> = Vec::new();
+                let mut excludes: Vec<String> = Vec::new();
+                if let Some(child) = node.children() {
+                    for n in child.nodes() {
+                        match n.name().value() {
+                            "include" => {
+                                for e in n.entries() {
+                                    includes.push(e.expect_str().to_string());
+                                }
+                            }
+                            "exclude" => {
+                                for e in n.entries() {
+                                    excludes.push(e.expect_str().to_string());
+                                }
+                            }
+                            _ => panic!("Unexpected directive for cp: {}", n.name().value()),
+                        }
+                    }
+                }
                 if src.is_dir() {
                     for entry in walkdir::WalkDir::new(&src) {
                         let entry = entry.expect("Failed to read directory entry");
