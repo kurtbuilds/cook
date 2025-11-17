@@ -137,6 +137,7 @@ impl RuleOverSsh for ServiceSpec {
 }
 
 impl Modification for ServiceChange {
+    #[cfg(feature = "ssh")]
     fn downcast_ssh(&self) -> Option<&dyn ModificationOverSsh> {
         Some(self)
     }

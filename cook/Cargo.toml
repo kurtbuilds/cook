@@ -26,3 +26,4 @@ typetag.workspace = true
 anyhow.workspace = true
 walkdir.workspace = true
 tracing.workspace = true
+globset.workspace = true

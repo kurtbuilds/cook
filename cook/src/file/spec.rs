@@ -1,5 +1,9 @@
+use globset::{Glob, GlobSet, GlobSetBuilder};
 use sha2::{Digest, Sha256};
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use kdl::KdlNode;
 use serde::{Deserialize, Serialize};
@@ -52,6 +56,32 @@ impl FileSpec {
     }
 }
 
+/// Check if a path should be included based on include/exclude patterns.
+/// Returns true if the path or any of its ancestors match an include pattern
+/// and don't match an exclude pattern.
+fn should_include_path(path: &Path, includes: &GlobSet, excludes: &GlobSet) -> bool {
+    // Check if the file or any of its ancestor directories match exclude patterns
+    for ancestor in path.ancestors() {
+        if excludes.is_match(ancestor) {
+            return false;
+        }
+    }
+
+    // If there are no include patterns, include everything (that wasn't excluded)
+    if includes.is_empty() {
+        return true;
+    }
+
+    // Check if the file or any of its ancestor directories match include patterns
+    for ancestor in path.ancestors() {
+        if includes.is_match(ancestor) {
+            return true;
+        }
+    }
+
+    false
+}
+
 impl FromKdl for FileSpec {
     fn kdl_keywords() -> &'static [&'static str] {
         &["file", "cp"]
@@ -69,35 +99,45 @@ impl FromKdl for FileSpec {
                 let src = context.local_path(args.next().unwrap().expect_str());
                 let dst_str = args.next().unwrap().expect_str();
                 let mut dst = PathBuf::from(dst_str);
-                let mut includes: Vec<String> = Vec::new();
-                let mut excludes: Vec<String> = Vec::new();
+                let mut includes: GlobSetBuilder = GlobSetBuilder::new();
+                let mut excludes: GlobSetBuilder = GlobSetBuilder::new();
                 if let Some(child) = node.children() {
                     for n in child.nodes() {
                         match n.name().value() {
                             "include" => {
                                 for e in n.entries() {
-                                    includes.push(e.expect_str().to_string());
+                                    let glob = format!("**/{}", e.expect_str().trim_end_matches("/"));
+                                    let glob = Glob::new(&glob).expect("Invalid path for include directive");
+                                    includes.add(glob);
                                 }
                             }
                             "exclude" => {
                                 for e in n.entries() {
-                                    excludes.push(e.expect_str().to_string());
+                                    let glob = format!("**/{}", e.expect_str().trim_end_matches("/"));
+                                    let glob = Glob::new(&glob).expect("Invalid path for exclude directive");
+                                    excludes.add(glob);
                                 }
                             }
                             _ => panic!("Unexpected directive for cp: {}", n.name().value()),
                         }
                     }
                 }
+                let includes = includes.build().expect("Failed to build includes");
+                let excludes = excludes.build().expect("Failed to build excludes");
                 if src.is_dir() {
-                    for entry in walkdir::WalkDir::new(&src) {
-                        let entry = entry.expect("Failed to read directory entry");
-                        let entry_path = entry.path();
-                        if entry_path.is_file() {
-                            let relative_path = entry_path.strip_prefix(&src).expect("Path should be under src");
-                            let target_path = dst.join(relative_path);
-                            let file = FileSpec::new_copy(entry_path.to_path_buf(), target_path);
-                            state.add_rule(file);
+                    let entries = walkdir::WalkDir::new(&src)
+                        .into_iter()
+                        .flat_map(|e| e.ok())
+                        .filter(|e| e.path().is_file());
+                    for entry in entries {
+                        let entry = entry.path();
+                        let relative_path = entry.strip_prefix(&src).expect("Path should be under src");
+                        if !should_include_path(relative_path, &includes, &excludes) {
+                            continue;
                         }
+                        let target_path = dst.join(relative_path);
+                        let file = FileSpec::new_copy(entry.to_path_buf(), target_path);
+                        state.add_rule(file);
                     } // walk the dir recursively. for every file, create a new FileSpec
                 } else {
                     if dst_str.ends_with('/') {
@@ -269,5 +309,64 @@ impl ModificationOverSsh for FileChange {
               // FileChange::MissingSymlink { .. } => todo!(),
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_include_matches_directory_and_children() {
+        let includes = GlobSetBuilder::new()
+            .add(Glob::new("**/build").unwrap())
+            .add(Glob::new("**/dist").unwrap())
+            .add(Glob::new("**/run.sh").unwrap())
+            .add(Glob::new("**/conf.yaml").unwrap())
+            .build()
+            .unwrap();
+        let excludes = GlobSetBuilder::new().build().unwrap();
+
+        // Should match the directory itself
+        assert!(should_include_path(
+            Path::new("foo/bar/build/bar.xml"),
+            &includes,
+            &excludes
+        ));
+
+        // Should match children of the directory
+        assert!(should_include_path(
+            Path::new("foo/bar/build/output.txt"),
+            &includes,
+            &excludes
+        ));
+        assert!(should_include_path(
+            Path::new("foo/bar/build/nested/file.txt"),
+            &includes,
+            &excludes
+        ));
+
+        // Should not match unrelated paths
+        assert!(!should_include_path(
+            Path::new("foo/bar/src/main.rs"),
+            &includes,
+            &excludes
+        ));
+    }
+
+    #[test]
+    fn test_include_matches_files_directly() {
+        let includes = GlobSetBuilder::new()
+            .add(Glob::new("**/build.rs").unwrap())
+            .build()
+            .unwrap();
+        let excludes = GlobSetBuilder::new().build().unwrap();
+
+        // Should match the file itself
+        assert!(should_include_path(Path::new("foo/bar/build.rs"), &includes, &excludes));
+        assert!(should_include_path(Path::new("build.rs"), &includes, &excludes));
+
+        // Should not match non-matching files
+        assert!(!should_include_path(Path::new("foo/bar/main.rs"), &includes, &excludes));
     }
 }
