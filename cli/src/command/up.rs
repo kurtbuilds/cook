@@ -25,12 +25,17 @@ impl Up {
                 }
             }
             Method::Ssh => {
+                let mut ok = true;
                 for host in &cli.host {
                     let session = connect_ssh(host).await;
-                    run_over_ssh(cli, session, &state, host).await;
+                    ok &= run_over_ssh(cli, session, &state, host).await;
+                }
+                if !ok {
+                    std::process::exit(1);
                 }
             }
             Method::Auto => {
+                let mut ok = true;
                 for host in &cli.host {
                     let session = connect_ssh(host).await;
                     let bin = check_cook_agent(&session).await;
@@ -38,8 +43,11 @@ impl Up {
                         // run via agent
                         // /
                     } else {
-                        run_over_ssh(cli, session, &state, host).await;
+                        ok &= run_over_ssh(cli, session, &state, host).await;
                     }
+                }
+                if !ok {
+                    std::process::exit(1);
                 }
             }
         }

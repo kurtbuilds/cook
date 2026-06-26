@@ -23,6 +23,7 @@ pub struct Unit {
 }
 
 /// Resolved dependencies for one unit, by unit index.
+#[derive(Debug)]
 pub struct UnitDeps {
     /// Units that must finish before this one runs (ordering). Includes `requires`.
     pub after: Vec<usize>,
@@ -31,6 +32,7 @@ pub struct UnitDeps {
 }
 
 /// A validated execution plan over [`State::units`].
+#[derive(Debug)]
 pub struct Schedule {
     /// Unit indices in dependency order: a unit always appears after every unit
     /// it depends on. Lets a scheduler build per-unit futures referencing their
