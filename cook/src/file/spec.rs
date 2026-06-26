@@ -1,6 +1,7 @@
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -129,6 +130,7 @@ impl FromKdl for FileSpec {
                         .into_iter()
                         .flat_map(|e| e.ok())
                         .filter(|e| e.path().is_file());
+                    let mut files = Vec::new();
                     for entry in entries {
                         let entry = entry.path();
                         let relative_path = entry.strip_prefix(&src).expect("Path should be under src");
@@ -136,9 +138,9 @@ impl FromKdl for FileSpec {
                             continue;
                         }
                         let target_path = dst.join(relative_path);
-                        let file = FileSpec::new_copy(entry.to_path_buf(), target_path);
-                        state.add_rule(file);
-                    } // walk the dir recursively. for every file, create a new FileSpec
+                        files.push(FileSpec::new_copy(entry.to_path_buf(), target_path));
+                    } // walk the dir recursively. collect every included file into one fileset
+                    state.add_rule(FileSetSpec { root: dst, files });
                 } else {
                     if dst_str.ends_with('/') {
                         dst.push(src.file_name().expect("Must have a file name."));
@@ -206,6 +208,83 @@ impl RuleOverSsh for FileSpec {
                         mode: self.mode.clone(),
                     })));
                 }
+            }
+        }
+        Ok(changes)
+    }
+}
+
+/// A whole-directory copy. Instead of checking each file with its own `sha256sum`
+/// command over SSH (one round-trip per file), the fileset is verified with a
+/// single command that hashes every file under `root` at once. Only the files
+/// whose hashes differ (or are missing) are uploaded.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileSetSpec {
+    /// Remote destination root. Used to enumerate existing remote files in one shot.
+    pub root: PathBuf,
+    /// Every included file, with its absolute target `path`, content and hash.
+    pub files: Vec<FileSpec>,
+}
+
+/// Single-quote a string for safe interpolation into an `sh -c` command.
+fn sh_single_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+impl Rule for FileSetSpec {
+    #[cfg(feature = "ssh")]
+    fn downcast_ssh(&self) -> Option<&dyn crate::RuleOverSsh> {
+        Some(self)
+    }
+
+    fn check(&self) -> Result<Vec<Box<dyn Modification>>, Error> {
+        todo!()
+    }
+
+    fn identifier(&self) -> &str {
+        self.root.to_str().unwrap()
+    }
+}
+
+#[cfg(feature = "ssh")]
+#[async_trait::async_trait]
+impl RuleOverSsh for FileSetSpec {
+    async fn check_ssh(&self, session: &openssh::Session) -> Result<Vec<Box<dyn Modification>>, Error> {
+        // Hash every existing file under `root` in a single round-trip. `find`
+        // errors (e.g. missing root) are swallowed so it degrades to "no remote
+        // files", which makes every local file appear missing and get uploaded.
+        let root = self.root.to_str().ok_or("root path is not valid utf-8")?;
+        let script = format!(
+            "find {} -type f -print0 2>/dev/null | xargs -0 sha256sum 2>/dev/null",
+            sh_single_quote(root)
+        );
+        let output = session.command("sh").arg("-c").arg(&script).output().await?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        // Parse `sha256sum` output: "<64-hex-hash>  <path>" per line. The path can
+        // contain spaces, so split on the two-space separator only.
+        let mut remote: HashMap<&str, &str> = HashMap::new();
+        for line in stdout.lines() {
+            if let Some((hash, path)) = line.split_once("  ") {
+                remote.insert(path, hash);
+            }
+        }
+
+        let mut changes: Vec<Box<dyn Modification>> = Vec::new();
+        for file in &self.files {
+            let path_str = file.path.to_str().ok_or("file path is not valid utf-8")?;
+            let needs_change = match &file.content {
+                FileContent::Content(_, sha256) => remote.get(path_str) != Some(&sha256.as_str()),
+                FileContent::Url(_) => !remote.contains_key(path_str),
+            };
+            if needs_change {
+                changes.push(Box::new(FileChange::MissingFile(MissingFile {
+                    path: file.path.clone(),
+                    content: file.content.clone(),
+                    owner: file.owner.clone(),
+                    group: file.group.clone(),
+                    mode: file.mode.clone(),
+                })));
             }
         }
         Ok(changes)

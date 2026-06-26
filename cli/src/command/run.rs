@@ -1,9 +1,14 @@
 use clap::Parser;
 use colored::Colorize;
 use cook::State;
+use futures::future::{FutureExt, Shared, join_all};
 use openssh::Session;
 use serde::Serialize;
 use std::fmt::Display;
+use std::future::Future;
+use std::ops::Range;
+use std::pin::Pin;
+use std::sync::Arc;
 use tracing::debug;
 
 use crate::{Cli, Context, Format, Method, kdl::parse_kdl};
@@ -54,12 +59,17 @@ impl Run {
                 }
             }
             Method::Ssh => {
+                let mut ok = true;
                 for host in &cli.host {
                     let session = connect_ssh(host).await;
-                    run_over_ssh(cli, session, &state, host).await;
+                    ok &= run_over_ssh(cli, session, &state, host).await;
+                }
+                if !ok {
+                    std::process::exit(1);
                 }
             }
             Method::Auto => {
+                let mut ok = true;
                 for host in &cli.host {
                     let session = connect_ssh(host).await;
                     let bin = check_cook_agent(&session).await;
@@ -67,8 +77,11 @@ impl Run {
                         // run via agent
                         // /
                     } else {
-                        run_over_ssh(cli, session, &state, host).await;
+                        ok &= run_over_ssh(cli, session, &state, host).await;
                     }
+                }
+                if !ok {
+                    std::process::exit(1);
                 }
             }
         }
@@ -92,35 +105,61 @@ impl Display for HostComplete {
 }
 
 pub fn structured_output<T: erased_serde::Serialize + ?Sized>(format: Format, data: &T) {
-    match format {
-        // Format::Human => eprintln!("{}", data),
-        Format::Human => {
-            let stdio = std::io::stdout();
-            let mut serializer = serde_json::Serializer::new(stdio);
-            erased_serde::serialize(data, &mut serializer).expect("Failed to serialize data");
-        }
-        Format::Json => {
-            let stdio = std::io::stdout();
-            let mut serializer = serde_json::Serializer::new(stdio);
-            erased_serde::serialize(data, &mut serializer).expect("Failed to serialize data");
-        }
-    }
+    print!("{}", serialize_structured(format, data));
+}
+
+/// Serialize `data` to a string using the same encoding as [`structured_output`].
+///
+/// Used when output is produced from concurrent tasks: each task serializes into
+/// its own buffer so writes to stdout don't interleave.
+pub fn serialize_structured<T: erased_serde::Serialize + ?Sized>(format: Format, data: &T) -> String {
+    let _ = format;
+    let mut buf = Vec::new();
+    let mut serializer = serde_json::Serializer::new(&mut buf);
+    erased_serde::serialize(data, &mut serializer).expect("Failed to serialize data");
+    String::from_utf8(buf).expect("serialized output was not valid utf8")
 }
 
 pub async fn run_over_ssh(cli: &Cli, session: Session, state: &State, host: &str) {
-    let mut count = 0;
     let session = std::sync::Arc::new(session);
-    for rule in state.rules() {
-        debug!(rule_id = rule.identifier(), "Checking rule");
-        let rule = rule.downcast_ssh().expect("Failed to downcast rule");
 
-        let modifications = rule.check_ssh(&*session).await.expect("failed");
-        count += modifications.len();
-        for modification in modifications {
-            let m = modification.downcast_ssh().expect("Cannot apply modification over ssh");
-            m.apply_ssh(session.clone()).await.expect("Failed to apply rule");
-            let ser: &dyn erased_serde::Serialize = modification.as_ref();
-            structured_output(cli.format, ser);
+    // Run every rule concurrently on this host, and within each rule apply its
+    // modifications concurrently. Commands are multiplexed over the single SSH
+    // connection (`connect_mux`) instead of being awaited one after another.
+    //
+    // We keep each rule's `check` coupled to applying that rule's own
+    // modifications, since a check may observe the result of its own changes.
+    let rule_tasks = state.rules().iter().map(|rule| {
+        let session = session.clone();
+        async move {
+            debug!(rule_id = rule.identifier(), "Checking rule");
+            let rule = rule.downcast_ssh().expect("Failed to downcast rule");
+            let modifications = rule.check_ssh(&*session).await.expect("failed");
+
+            let mod_tasks = modifications.into_iter().map(|modification| {
+                let session = session.clone();
+                async move {
+                    let m = modification
+                        .downcast_ssh()
+                        .expect("Cannot apply modification over ssh");
+                    m.apply_ssh(session.clone())
+                        .await
+                        .expect("Failed to apply rule");
+                    let ser: &dyn erased_serde::Serialize = modification.as_ref();
+                    serialize_structured(cli.format, ser)
+                }
+            });
+            futures::future::join_all(mod_tasks).await
+        }
+    });
+
+    let results = futures::future::join_all(rule_tasks).await;
+
+    let mut count = 0;
+    for outputs in results {
+        for output in outputs {
+            count += 1;
+            print!("{output}");
         }
     }
     if count == 0 {

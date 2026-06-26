@@ -4,6 +4,7 @@ mod global_state;
 mod host;
 mod kdl;
 mod package;
+mod seq;
 mod service;
 mod user;
 mod which;
@@ -19,7 +20,8 @@ pub use user::api::*;
 pub use which::api::*;
 
 pub use context::Context;
-pub use global_state::State;
+pub use global_state::{Schedule, State, Unit, UnitDeps};
+pub use seq::{SEQUENCING_KEYWORDS, Sequencing};
 
 use crate::{
     file::spec::FileSpec, package::spec::PackageSpec, service::spec::ServiceSpec, user::spec::UserSpec,
