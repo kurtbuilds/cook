@@ -1,13 +1,10 @@
 use clap::Parser;
 use colored::Colorize;
 use cook::State;
-use futures::future::{FutureExt, Shared, join_all};
 use openssh::Session;
 use serde::Serialize;
 use std::fmt::Display;
-use std::future::Future;
 use std::ops::Range;
-use std::pin::Pin;
 use std::sync::Arc;
 use tracing::debug;
 
@@ -45,7 +42,8 @@ impl Run {
             panic!("No command to run");
         }
         let command = self.command.join(" ");
-        let context = Context::new(&cli.root);
+        let mut context = Context::new(&cli.root);
+        cook::add_kdl_deserializers_to_context(&mut context);
         let state = parse_kdl(&command, context);
 
         match cli.method {
@@ -110,8 +108,7 @@ pub fn structured_output<T: erased_serde::Serialize + ?Sized>(format: Format, da
 
 /// Serialize `data` to a string using the same encoding as [`structured_output`].
 ///
-/// Used when output is produced from concurrent tasks: each task serializes into
-/// its own buffer so writes to stdout don't interleave.
+/// Used to serialize modification output before it is emitted.
 pub fn serialize_structured<T: erased_serde::Serialize + ?Sized>(format: Format, data: &T) -> String {
     let _ = format;
     let mut buf = Vec::new();
@@ -120,10 +117,7 @@ pub fn serialize_structured<T: erased_serde::Serialize + ?Sized>(format: Format,
     String::from_utf8(buf).expect("serialized output was not valid utf8")
 }
 
-/// The result of running one unit, shared across its dependents.
-///
-/// `Arc`-wrapped payloads keep cloning cheap, which matters because dependents
-/// each hold a clone of their dependencies' [`Shared`] futures.
+/// The result of running one unit.
 #[derive(Clone)]
 enum UnitOutcome {
     /// Completed; carries the serialized modification outputs.
@@ -134,14 +128,10 @@ enum UnitOutcome {
     Failed(Arc<str>),
 }
 
-type UnitFut<'a> = Shared<Pin<Box<dyn Future<Output = UnitOutcome> + 'a>>>;
-
 /// Apply the config to one host, honoring sequencing directives.
 ///
-/// Units run as soon as their dependencies complete — independent units run
-/// fully concurrently, multiplexed over the single SSH connection, while
-/// `after`/`before`/`requires` edges are respected. A `requires` dependency that
-/// fails causes its dependents to be skipped rather than aborting the whole run.
+/// Units run in dependency order. A `requires` dependency that fails causes its
+/// dependents to be skipped rather than aborting the whole run.
 ///
 /// Returns `true` if no unit failed.
 pub async fn run_over_ssh(cli: &Cli, session: Session, state: &State, host: &str) -> bool {
@@ -151,50 +141,33 @@ pub async fn run_over_ssh(cli: &Cli, session: Session, state: &State, host: &str
         .build_schedule()
         .unwrap_or_else(|e| panic!("invalid sequencing in config: {e}"));
 
-    // Build a Shared future per unit in dependency order, so each unit can
-    // capture clones of the futures it must wait for.
-    let mut futs: Vec<Option<UnitFut>> = (0..units.len()).map(|_| None).collect();
+    let mut outcomes: Vec<Option<UnitOutcome>> = vec![None; units.len()];
     for &u in &schedule.topo_order {
-        let deps: Vec<(bool, UnitFut)> = schedule.deps[u]
-            .after
-            .iter()
-            .map(|&d| {
-                let is_required = schedule.deps[u].requires.contains(&d);
-                let dep = futs[d]
-                    .clone()
-                    .expect("topological order guarantees dependencies are built first");
-                (is_required, dep)
-            })
-            .collect();
-
-        let range = units[u].rules.clone();
-        let name = units[u].name.clone();
-
-        let session = session.clone();
-        let fut = async move {
-            // Wait for ordering deps; skip if any required dep didn't complete.
-            let mut skip = false;
-            for (is_required, dep) in deps {
-                let outcome = dep.await;
-                if is_required && !matches!(outcome, UnitOutcome::Done(_)) {
-                    skip = true;
-                }
+        let mut skip = false;
+        for &dep in &schedule.deps[u].after {
+            let outcome = outcomes[dep]
+                .as_ref()
+                .expect("topological order guarantees dependencies are built first");
+            if schedule.deps[u].requires.contains(&dep) && !matches!(outcome, UnitOutcome::Done(_)) {
+                skip = true;
             }
-            if skip {
-                return UnitOutcome::Skipped;
-            }
-            match run_unit_rules(cli, state, session, range).await {
+        }
+
+        let outcome = if skip {
+            UnitOutcome::Skipped
+        } else {
+            match run_unit_rules(cli, state, session.clone(), units[u].rules.clone()).await {
                 Ok(outputs) => UnitOutcome::Done(Arc::new(outputs)),
-                Err(e) => UnitOutcome::Failed(Arc::from(format!("unit '{name}': {e}"))),
+                Err(e) => UnitOutcome::Failed(Arc::from(format!("unit '{}': {e}", units[u].name))),
             }
         };
-        let fut: Pin<Box<dyn Future<Output = UnitOutcome> + '_>> = Box::pin(fut);
-        futs[u] = Some(fut.shared());
+        outcomes[u] = Some(outcome);
     }
 
-    // Drive every unit. Dependencies are awaited inside each future; `Shared`
-    // ensures each unit's work runs at most once.
-    let outcomes = join_all(futs.iter().map(|f| f.clone().expect("all units built"))).await;
+    let outcomes: Vec<UnitOutcome> = outcomes
+        .into_iter()
+        .map(|outcome| outcome.expect("all units built"))
+        .collect();
 
     let mut count = 0;
     let mut ok = true;
@@ -208,7 +181,10 @@ pub async fn run_over_ssh(cli: &Cli, session: Session, state: &State, host: &str
             }
             UnitOutcome::Skipped => {
                 let skipped = "[skipped]".yellow();
-                eprintln!("{skipped} {host}: unit '{}' (required dependency did not complete)", units[u].name);
+                eprintln!(
+                    "{skipped} {host}: unit '{}' (required dependency did not complete)",
+                    units[u].name
+                );
             }
             UnitOutcome::Failed(msg) => {
                 ok = false;
@@ -232,9 +208,9 @@ pub async fn run_over_ssh(cli: &Cli, session: Session, state: &State, host: &str
     ok
 }
 
-/// Run all rules in a unit concurrently: each rule checks itself, then applies
-/// its modifications concurrently. Returns the serialized outputs of every
-/// modification applied, or the first error encountered.
+/// Run all rules in a unit in order. Each rule checks itself, then applies its
+/// modifications in order. Returns the serialized outputs of every modification
+/// applied, or the first error encountered.
 async fn run_unit_rules(
     cli: &Cli,
     state: &State,
@@ -242,35 +218,23 @@ async fn run_unit_rules(
     range: Range<usize>,
 ) -> Result<Vec<String>, cook::Error> {
     let rules = state.rules();
-    let rule_tasks = range.map(|i| {
-        let session = session.clone();
-        let rule = &rules[i];
-        async move {
-            debug!(rule_id = rule.identifier(), "Checking rule");
-            let rule = rule
-                .downcast_ssh()
-                .ok_or_else(|| cook::Error::from("rule cannot run over ssh"))?;
-            let modifications = rule.check_ssh(&session).await?;
-
-            let mod_tasks = modifications.into_iter().map(|modification| {
-                let session = session.clone();
-                async move {
-                    let m = modification
-                        .downcast_ssh()
-                        .ok_or_else(|| cook::Error::from("modification cannot be applied over ssh"))?;
-                    m.apply_ssh(session.clone()).await?;
-                    let ser: &dyn erased_serde::Serialize = modification.as_ref();
-                    Ok::<String, cook::Error>(serialize_structured(cli.format, ser))
-                }
-            });
-            join_all(mod_tasks).await.into_iter().collect::<Result<Vec<_>, _>>()
-        }
-    });
-
-    let per_rule = join_all(rule_tasks).await;
     let mut outputs = Vec::new();
-    for rule_outputs in per_rule {
-        outputs.extend(rule_outputs?);
+    for i in range {
+        let rule = &rules[i];
+        debug!(rule_id = rule.identifier(), "Checking rule");
+        let rule = rule
+            .downcast_ssh()
+            .ok_or_else(|| cook::Error::from("rule cannot run over ssh"))?;
+        let modifications = rule.check_ssh(&session).await?;
+
+        for modification in modifications {
+            let m = modification
+                .downcast_ssh()
+                .ok_or_else(|| cook::Error::from("modification cannot be applied over ssh"))?;
+            m.apply_ssh(session.clone()).await?;
+            let ser: &dyn erased_serde::Serialize = modification.as_ref();
+            outputs.push(serialize_structured(cli.format, ser));
+        }
     }
     Ok(outputs)
 }

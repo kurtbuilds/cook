@@ -66,21 +66,20 @@ impl FromKdl for ServiceSpec {
                     timer_file = Some(content);
                 }
                 "on_calendar" => on_calendar = Some(e.expect_str().to_string()),
-                "persistent" => {
-                    persistent = e.value().as_bool().expect("Value for persistent is not a bool")
-                }
+                "persistent" => persistent = e.value().as_bool().expect("Value for persistent is not a bool"),
                 z => panic!("Unexpected option for service: {}", z),
             }
         }
 
         let timer_file_content = match (timer_file, on_calendar) {
             (Some(_), Some(_)) => {
-                panic!("service {}: specify only one of `timer` or `on_calendar`, not both", name)
+                panic!(
+                    "service {}: specify only one of `timer` or `on_calendar`, not both",
+                    name
+                )
             }
             (Some(content), None) => Some(content),
-            (None, Some(schedule)) => {
-                Some(generate_timer_file_content(&name, &schedule, persistent))
-            }
+            (None, Some(schedule)) => Some(generate_timer_file_content(&name, &schedule, persistent)),
             (None, None) => None,
         };
 
@@ -237,11 +236,7 @@ mod tests {
 
     #[test]
     fn on_calendar_generates_a_complete_timer_unit() {
-        let content = generate_timer_file_content(
-            "flex-orders-sync",
-            "Mon..Fri 18:00 America/New_York",
-            true,
-        );
+        let content = generate_timer_file_content("flex-orders-sync", "Mon..Fri 18:00 America/New_York", true);
         assert_eq!(
             content,
             "# Managed by ser\n\
@@ -259,8 +254,7 @@ mod tests {
 
     #[test]
     fn persistent_false_omits_the_persistent_line() {
-        let content =
-            generate_timer_file_content("flex-orders-sync", "Mon..Fri 18:00 America/New_York", false);
+        let content = generate_timer_file_content("flex-orders-sync", "Mon..Fri 18:00 America/New_York", false);
         assert!(!content.contains("Persistent"), "got: {content}");
         assert!(content.contains("OnCalendar=Mon..Fri 18:00 America/New_York\n"));
     }

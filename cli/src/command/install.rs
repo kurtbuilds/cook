@@ -34,8 +34,7 @@ impl Install {
                 .output()
                 .await
                 .expect("Failed to get triple data");
-            let triple_output =
-                String::from_utf8(output.stdout).expect("server output was not valid UTF-8");
+            let triple_output = String::from_utf8(output.stdout).expect("server output was not valid UTF-8");
             let mut parts = triple_output.trim_end().split(" ");
             let os = parts.next().expect("Invalid triple output");
             let arch = parts.next().expect("Invalid triple output");

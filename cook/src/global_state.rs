@@ -110,9 +110,10 @@ impl State {
             }
         }
         let resolve = |referrer: &str, name: &str| -> Result<usize, crate::Error> {
-            index.get(name).copied().ok_or_else(|| {
-                anyhow::anyhow!("unit '{referrer}' references unknown unit '{name}'").into()
-            })
+            index
+                .get(name)
+                .copied()
+                .ok_or_else(|| anyhow::anyhow!("unit '{referrer}' references unknown unit '{name}'").into())
         };
 
         // edges[u] = units that must run before u. requires[u] ⊆ edges[u].
@@ -163,9 +164,7 @@ impl State {
                 .filter(|&u| in_degree[u] > 0)
                 .map(|u| self.units[u].name.as_str())
                 .collect();
-            return Err(
-                anyhow::anyhow!("dependency cycle detected among units: {}", cyclic.join(", ")).into(),
-            );
+            return Err(anyhow::anyhow!("dependency cycle detected among units: {}", cyclic.join(", ")).into());
         }
 
         let deps = (0..n)

@@ -11,10 +11,7 @@ impl Ssh {
     pub async fn run(&self, cli: &Cli) {
         if self.command.is_empty() {
             let host = cli.host.first().unwrap();
-            std::process::Command::new("ssh")
-                .arg(host)
-                .status()
-                .unwrap();
+            std::process::Command::new("ssh").arg(host).status().unwrap();
         } else {
             if cli.host.is_empty() {
                 panic!("You must provide a host");
