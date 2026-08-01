@@ -74,6 +74,11 @@ pub trait ModificationOverSsh {
 
 pub type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
 
+/// Single-quote a string for safe interpolation into an `sh -c` command.
+pub(crate) fn sh_single_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
 pub trait VecDyn {
     fn push_boxed(&mut self, item: impl Modification + 'static);
 }

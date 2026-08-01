@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Context, Error, FromKdl, Modification, ModificationOverSsh, Rule, RuleOverSsh, State};
 
+#[cfg(feature = "ssh")]
+use crate::sh_single_quote;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FileContent {
     Content(Vec<u8>, String),
@@ -224,11 +227,6 @@ pub struct FileSetSpec {
     pub root: PathBuf,
     /// Every included file, with its absolute target `path`, content and hash.
     pub files: Vec<FileSpec>,
-}
-
-/// Single-quote a string for safe interpolation into an `sh -c` command.
-fn sh_single_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 impl Rule for FileSetSpec {

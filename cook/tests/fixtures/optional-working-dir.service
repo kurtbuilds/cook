@@ -1,0 +1,10 @@
+[Unit]
+Description=Example service whose working directory is optional
+
+[Service]
+ExecStart=/usr/bin/example --serve
+WorkingDirectory=-/srv/optional
+User=example
+
+[Install]
+WantedBy=multi-user.target

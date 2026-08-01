@@ -1,0 +1,12 @@
+[Unit]
+Description=Example service
+
+[Service]
+ExecStart=/usr/bin/example --serve
+WorkingDirectory=/srv/example
+User=example
+Group=example-grp
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
