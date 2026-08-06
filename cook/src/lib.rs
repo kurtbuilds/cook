@@ -48,6 +48,16 @@ pub trait Rule: erased_serde::Serialize + std::fmt::Debug + Send + Sync + 'stati
     fn kind(&self) -> &'static str;
     /// a unique identifier for the rule, used for debugging but not used in the implementation
     fn identifier(&self) -> &str;
+    /// Units this rule needs applied first, read out of the rule's own content
+    /// instead of declared in the config: a service that runs as `User=server`
+    /// cannot have its working directory chowned until that account exists.
+    ///
+    /// References are qualified (`kind:name`) and ordering-only. Unlike an
+    /// `after` the author wrote, one naming a unit the config does not declare
+    /// is ignored — most `User=` accounts are the host's, not cook's to create.
+    fn implied_after(&self) -> Vec<String> {
+        Vec::new()
+    }
     /// check the rule
     fn check(&self) -> Result<Vec<Box<dyn Modification>>, Error>;
 }

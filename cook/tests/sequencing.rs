@@ -217,6 +217,32 @@ fn a_colon_in_a_path_identifier_is_not_a_qualified_reference() {
 }
 
 #[test]
+fn a_service_runs_after_the_user_it_runs_as() {
+    // Regression: the service chowns its working directory to the unit's
+    // `User=` and starts under it, so declaring the account later in the file
+    // must not mean creating it later in the run.
+    let state = parse("service server \"tests/fixtures/example.service\"\nuser example");
+    let schedule = state.build_schedule().expect("valid schedule");
+    let service = qualified_index(&state, "service:server");
+    let user = qualified_index(&state, "user:example");
+    assert_eq!(schedule.deps[service].after, vec![user]);
+    assert!(ordered_before(&schedule.topo_order, user, service));
+}
+
+#[test]
+fn a_user_the_config_does_not_declare_is_not_a_dependency() {
+    // `User=example` is usually an account the host already has; cook only
+    // orders against it when the config manages it too.
+    let state = parse("service server \"tests/fixtures/example.service\"");
+    let schedule = state.build_schedule().expect("valid schedule");
+    assert!(
+        schedule.deps[qualified_index(&state, "service:server")]
+            .after
+            .is_empty()
+    );
+}
+
+#[test]
 #[should_panic(expected = "may not contain ':'")]
 fn an_explicit_name_may_not_contain_a_colon() {
     parse("package a {\n  name we:b\n}");

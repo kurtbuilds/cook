@@ -115,6 +115,15 @@ impl Rule for ServiceSpec {
         &self.name
     }
 
+    /// The account the unit runs as, when the config also declares it: cook
+    /// chowns the working directory to that user and starts the unit under it,
+    /// so a `user` node for it has to run first.
+    fn implied_after(&self) -> Vec<String> {
+        crate::service::unit::service_owner(&self.service_file_content)
+            .map(|owner| vec![format!("user:{}", owner.user)])
+            .unwrap_or_default()
+    }
+
     #[cfg(feature = "ssh")]
     fn downcast_ssh(&self) -> Option<&dyn crate::RuleOverSsh> {
         Some(self)

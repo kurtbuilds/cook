@@ -174,6 +174,20 @@ impl State {
                 let target = resolve(unit, name)?;
                 edges[target].insert(u);
             }
+            // Ordering the rules themselves imply. These are always qualified,
+            // and a reference to a unit the config does not declare is not an
+            // error — it names a resource that is not cook's to manage.
+            for rule in &self.host_rules[unit.rules.clone()] {
+                for name in rule.implied_after() {
+                    if let Some((kind, unqualified)) = name.split_once(':')
+                        && let Some(&dep) = qualified.get(&(kind, unqualified))
+                        // A rule that names its own unit orders nothing.
+                        && dep != u
+                    {
+                        edges[u].insert(dep);
+                    }
+                }
+            }
         }
         for (u, unit) in self.units.iter().enumerate() {
             if edges[u].contains(&u) {
