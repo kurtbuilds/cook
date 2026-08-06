@@ -46,7 +46,7 @@ pub fn extract_sequencing(node: &mut KdlNode) -> Sequencing {
             return true;
         };
         match key {
-            "name" => seq.name = Some(value.to_string()),
+            "name" => seq.name = Some(check_name(value)),
             "after" => seq.after.extend(split_names(value)),
             "before" => seq.before.extend(split_names(value)),
             "requires" => seq.requires.extend(split_names(value)),
@@ -60,7 +60,7 @@ pub fn extract_sequencing(node: &mut KdlNode) -> Sequencing {
         children.nodes_mut().retain(|child| {
             let names = || child.entries().iter().map(|e| e.expect_str().to_string());
             match child.name().value() {
-                "name" => seq.name = child.entries().first().map(|e| e.expect_str().to_string()),
+                "name" => seq.name = child.entries().first().map(|e| check_name(e.expect_str())),
                 "after" => seq.after.extend(names()),
                 "before" => seq.before.extend(names()),
                 "requires" => seq.requires.extend(names()),
@@ -77,4 +77,15 @@ pub fn extract_sequencing(node: &mut KdlNode) -> Sequencing {
 /// individual unit names.
 fn split_names(value: &str) -> impl Iterator<Item = String> + '_ {
     value.split_whitespace().map(str::to_string)
+}
+
+/// Reject an explicit `name` that would be read as a qualified `kind:name`
+/// reference. Units are already qualified by their rule type, so a colon in the
+/// name itself would make references to it ambiguous to parse.
+fn check_name(name: &str) -> String {
+    assert!(
+        !name.contains(':'),
+        "unit name '{name}' may not contain ':', which separates a rule type from a unit name in references"
+    );
+    name.to_string()
 }

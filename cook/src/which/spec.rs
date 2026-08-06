@@ -87,6 +87,10 @@ impl Rule for WhichSpec {
     fn downcast_ssh(&self) -> Option<&dyn crate::RuleOverSsh> {
         Some(self)
     }
+    fn kind(&self) -> &'static str {
+        "which"
+    }
+
     fn identifier(&self) -> &str {
         &self.bin
     }

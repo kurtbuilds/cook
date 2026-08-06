@@ -127,13 +127,6 @@ fn unknown_reference_is_rejected() {
 }
 
 #[test]
-fn duplicate_name_is_rejected() {
-    let state = parse("package a {\n  name dup\n}\npackage b {\n  name dup\n}");
-    let err = state.build_schedule().expect_err("duplicate name should be rejected");
-    assert!(err.to_string().contains("duplicate"), "got: {err}");
-}
-
-#[test]
 fn self_dependency_is_rejected() {
     let state = parse("package a {\n  requires a\n}");
     let err = state.build_schedule().expect_err("self dep should be rejected");
@@ -146,4 +139,85 @@ fn independent_units_have_no_dependencies() {
     let schedule = state.build_schedule().expect("valid schedule");
     assert!(schedule.deps.iter().all(|d| d.after.is_empty()));
     assert_eq!(schedule.topo_order.len(), 3);
+}
+
+/// Index of the unit with the given fully qualified `kind:name`.
+fn qualified_index(state: &State, qualified: &str) -> usize {
+    state
+        .units()
+        .iter()
+        .position(|u| u.qualified() == qualified)
+        .unwrap_or_else(|| panic!("no unit named {qualified}"))
+}
+
+#[test]
+fn the_same_name_in_two_kinds_is_not_a_collision() {
+    // A `user` and a `service` may both be called `server`: units are
+    // identified by `kind:name`, so neither shadows the other.
+    let state = parse("user server\nservice server \"tests/fixtures/example.service\"");
+    let names: Vec<String> = state.units().iter().map(|u| u.qualified()).collect();
+    assert_eq!(names, vec!["user:server", "service:server"]);
+    let schedule = state.build_schedule().expect("valid schedule");
+    assert_eq!(schedule.topo_order.len(), 2);
+}
+
+#[test]
+fn duplicate_name_within_one_kind_is_still_rejected() {
+    let state = parse("package a {\n  name dup\n}\npackage b {\n  name dup\n}");
+    let err = state.build_schedule().expect_err("duplicate name should be rejected");
+    assert!(
+        err.to_string().contains("duplicate unit name 'package:dup'"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn a_qualified_reference_selects_one_kind() {
+    let state = parse(
+        "user server\nservice server \"tests/fixtures/example.service\"\npackage web {\n  requires service:server\n}",
+    );
+    let schedule = state.build_schedule().expect("valid schedule");
+    let web = qualified_index(&state, "package:web");
+    assert_eq!(
+        schedule.deps[web].requires,
+        vec![qualified_index(&state, "service:server")]
+    );
+}
+
+#[test]
+fn an_ambiguous_bare_reference_is_rejected_and_names_the_candidates() {
+    let state = parse("user server\nservice server \"tests/fixtures/example.service\"\npackage web after=server");
+    let err = state.build_schedule().expect_err("ambiguous ref should be rejected");
+    let err = err.to_string();
+    assert!(err.contains("ambiguous"), "got: {err}");
+    assert!(
+        err.contains("service:server") && err.contains("user:server"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn a_bare_reference_resolves_across_kinds_when_it_is_unique() {
+    // Qualification is only required where a config is genuinely ambiguous;
+    // `user server` is the only unit named `server`, so the bare name resolves.
+    let state = parse("user server\npackage web after=server");
+    let schedule = state.build_schedule().expect("valid schedule");
+    let web = qualified_index(&state, "package:web");
+    assert_eq!(schedule.deps[web].after, vec![qualified_index(&state, "user:server")]);
+}
+
+#[test]
+fn a_colon_in_a_path_identifier_is_not_a_qualified_reference() {
+    // File units are identified by path, and a path may contain a colon. The
+    // prefix is only a rule type when it names one, so this stays a bare name.
+    let state = parse("file \"/srv/a:b\"\npackage web {\n  after \"/srv/a:b\"\n}");
+    let schedule = state.build_schedule().expect("valid schedule");
+    let web = qualified_index(&state, "package:web");
+    assert_eq!(schedule.deps[web].after, vec![qualified_index(&state, "file:/srv/a:b")]);
+}
+
+#[test]
+#[should_panic(expected = "may not contain ':'")]
+fn an_explicit_name_may_not_contain_a_colon() {
+    parse("package a {\n  name we:b\n}");
 }

@@ -33,6 +33,10 @@ impl Rule for UserSpec {
     fn downcast_ssh(&self) -> Option<&dyn crate::RuleOverSsh> {
         Some(self)
     }
+    fn kind(&self) -> &'static str {
+        "user"
+    }
+
     fn identifier(&self) -> &str {
         self.name.as_str()
     }

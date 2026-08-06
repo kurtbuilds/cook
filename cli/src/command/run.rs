@@ -158,7 +158,7 @@ pub async fn run_over_ssh(cli: &Cli, session: Session, state: &State, host: &str
         } else {
             match run_unit_rules(cli, state, session.clone(), units[u].rules.clone()).await {
                 Ok(outputs) => UnitOutcome::Done(Arc::new(outputs)),
-                Err(e) => UnitOutcome::Failed(Arc::from(format!("unit '{}': {e}", units[u].name))),
+                Err(e) => UnitOutcome::Failed(Arc::from(format!("unit '{}': {e}", units[u].qualified()))),
             }
         };
         outcomes[u] = Some(outcome);
@@ -183,7 +183,7 @@ pub async fn run_over_ssh(cli: &Cli, session: Session, state: &State, host: &str
                 let skipped = "[skipped]".yellow();
                 eprintln!(
                     "{skipped} {host}: unit '{}' (required dependency did not complete)",
-                    units[u].name
+                    units[u].qualified()
                 );
             }
             UnitOutcome::Failed(msg) => {

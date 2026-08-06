@@ -39,6 +39,13 @@ pub trait Rule: erased_serde::Serialize + std::fmt::Debug + Send + Sync + 'stati
     fn downcast_ssh(&self) -> Option<&dyn RuleOverSsh> {
         None
     }
+    /// The rule type this rule belongs to, used to qualify unit names so that
+    /// e.g. a `user` and a `service` may both be called `server`.
+    ///
+    /// This is the resource kind, not the config keyword that produced it: both
+    /// `file` and `cp` yield rules of kind `file`, because they describe the
+    /// same resource and two nodes targeting one path are a real conflict.
+    fn kind(&self) -> &'static str;
     /// a unique identifier for the rule, used for debugging but not used in the implementation
     fn identifier(&self) -> &str;
     /// check the rule

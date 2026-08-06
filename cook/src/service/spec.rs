@@ -107,6 +107,10 @@ impl FromKdl for ServiceSpec {
 }
 
 impl Rule for ServiceSpec {
+    fn kind(&self) -> &'static str {
+        "service"
+    }
+
     fn identifier(&self) -> &str {
         &self.name
     }

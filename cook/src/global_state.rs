@@ -12,6 +12,9 @@ use crate::{Host, Rule, Sequencing};
 /// sequencing is expressed and enforced.
 #[derive(Debug)]
 pub struct Unit {
+    /// Rule type of the unit's first rule. Together with `name` this forms the
+    /// unit's identity, so a `user` and a `service` may share a name.
+    pub kind: &'static str,
     /// Name other units reference in `after`/`before`/`requires`. Defaults to
     /// the identifier of the unit's first rule.
     pub name: String,
@@ -20,6 +23,14 @@ pub struct Unit {
     pub after: Vec<String>,
     pub before: Vec<String>,
     pub requires: Vec<String>,
+}
+
+impl Unit {
+    /// The unit's fully qualified name, `kind:name`. Unique across a config, and
+    /// the form a reference must take when a bare name is ambiguous.
+    pub fn qualified(&self) -> String {
+        format!("{}:{}", self.kind, self.name)
+    }
 }
 
 /// Resolved dependencies for one unit, by unit index.
@@ -83,10 +94,11 @@ impl State {
         if rules.is_empty() {
             return;
         }
-        let name = sequencing
-            .name
-            .unwrap_or_else(|| self.host_rules[rules.start].identifier().to_string());
+        let first = &self.host_rules[rules.start];
+        let kind = first.kind();
+        let name = sequencing.name.unwrap_or_else(|| first.identifier().to_string());
         self.units.push(Unit {
+            kind,
             name,
             rules,
             after: sequencing.after,
@@ -98,22 +110,51 @@ impl State {
     /// Resolve unit names to indices, invert `before` edges into `after` edges,
     /// validate references, detect cycles, and produce a topological order.
     ///
-    /// Errors on duplicate unit names, references to unknown units, self
-    /// dependencies, and dependency cycles.
+    /// Units are identified by `kind:name`, so a `user` and a `service` may
+    /// share a name. References may be written either way: a bare name resolves
+    /// as long as exactly one unit answers to it, which keeps the qualified form
+    /// necessary only where a config is genuinely ambiguous.
+    ///
+    /// Errors on two units of the same kind sharing a name, references to
+    /// unknown or ambiguous units, self dependencies, and dependency cycles.
     pub fn build_schedule(&self) -> Result<Schedule, crate::Error> {
         let n = self.units.len();
 
-        let mut index: BTreeMap<&str, usize> = BTreeMap::new();
+        let mut qualified: BTreeMap<(&str, &str), usize> = BTreeMap::new();
+        let mut bare: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+        let mut kinds: BTreeSet<&str> = BTreeSet::new();
         for (i, unit) in self.units.iter().enumerate() {
-            if index.insert(unit.name.as_str(), i).is_some() {
-                return Err(anyhow::anyhow!("duplicate unit name '{}'", unit.name).into());
+            if qualified.insert((unit.kind, unit.name.as_str()), i).is_some() {
+                return Err(anyhow::anyhow!("duplicate unit name '{}'", unit.qualified()).into());
             }
+            bare.entry(unit.name.as_str()).or_default().push(i);
+            kinds.insert(unit.kind);
         }
-        let resolve = |referrer: &str, name: &str| -> Result<usize, crate::Error> {
-            index
-                .get(name)
-                .copied()
-                .ok_or_else(|| anyhow::anyhow!("unit '{referrer}' references unknown unit '{name}'").into())
+
+        let resolve = |referrer: &Unit, name: &str| -> Result<usize, crate::Error> {
+            let unknown = || anyhow::anyhow!("unit '{}' references unknown unit '{name}'", referrer.qualified()).into();
+            // Treat a `kind:name` reference as qualified only when the prefix is
+            // a rule type in play: file units are identified by path, and a path
+            // may legitimately contain a colon.
+            if let Some((kind, unqualified)) = name.split_once(':')
+                && kinds.contains(kind)
+            {
+                return qualified.get(&(kind, unqualified)).copied().ok_or_else(unknown);
+            }
+            match bare.get(name).map(Vec::as_slice) {
+                Some([unit]) => Ok(*unit),
+                // Zero candidates cannot occur: names are only inserted with a unit.
+                Some(candidates) => {
+                    let candidates: Vec<String> = candidates.iter().map(|&u| self.units[u].qualified()).collect();
+                    Err(anyhow::anyhow!(
+                        "unit '{}' references '{name}', which is ambiguous between {}; qualify the reference",
+                        referrer.qualified(),
+                        candidates.join(", ")
+                    )
+                    .into())
+                }
+                None => Err(unknown()),
+            }
         };
 
         // edges[u] = units that must run before u. requires[u] ⊆ edges[u].
@@ -121,22 +162,22 @@ impl State {
         let mut requires: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); n];
         for (u, unit) in self.units.iter().enumerate() {
             for name in &unit.after {
-                edges[u].insert(resolve(&unit.name, name)?);
+                edges[u].insert(resolve(unit, name)?);
             }
             for name in &unit.requires {
-                let dep = resolve(&unit.name, name)?;
+                let dep = resolve(unit, name)?;
                 edges[u].insert(dep);
                 requires[u].insert(dep);
             }
             for name in &unit.before {
                 // `u before x` means x runs after u.
-                let target = resolve(&unit.name, name)?;
+                let target = resolve(unit, name)?;
                 edges[target].insert(u);
             }
         }
         for (u, unit) in self.units.iter().enumerate() {
             if edges[u].contains(&u) {
-                return Err(anyhow::anyhow!("unit '{}' depends on itself", unit.name).into());
+                return Err(anyhow::anyhow!("unit '{}' depends on itself", unit.qualified()).into());
             }
         }
 
@@ -160,9 +201,9 @@ impl State {
             }
         }
         if topo_order.len() != n {
-            let cyclic: Vec<&str> = (0..n)
+            let cyclic: Vec<String> = (0..n)
                 .filter(|&u| in_degree[u] > 0)
-                .map(|u| self.units[u].name.as_str())
+                .map(|u| self.units[u].qualified())
                 .collect();
             return Err(anyhow::anyhow!("dependency cycle detected among units: {}", cyclic.join(", ")).into());
         }

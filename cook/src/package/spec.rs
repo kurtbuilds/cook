@@ -28,6 +28,10 @@ impl Rule for PackageSpec {
     fn downcast_ssh(&self) -> Option<&dyn crate::RuleOverSsh> {
         Some(self)
     }
+    fn kind(&self) -> &'static str {
+        "package"
+    }
+
     fn identifier(&self) -> &str {
         self.name.as_str()
     }

@@ -166,6 +166,10 @@ impl Rule for FileSpec {
         todo!()
     }
 
+    fn kind(&self) -> &'static str {
+        "file"
+    }
+
     fn identifier(&self) -> &str {
         self.path.to_str().unwrap()
     }
@@ -237,6 +241,10 @@ impl Rule for FileSetSpec {
 
     fn check(&self) -> Result<Vec<Box<dyn Modification>>, Error> {
         todo!()
+    }
+
+    fn kind(&self) -> &'static str {
+        "file"
     }
 
     fn identifier(&self) -> &str {
