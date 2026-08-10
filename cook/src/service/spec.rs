@@ -399,17 +399,19 @@ impl ModificationOverSsh for ServiceChange {
                 // dance" that `ser` used to do for us).
                 manager.reload(&session).await?;
 
-                if service.start {
-                    // For a timer-backed service it's the timer that gets
-                    // enabled — it triggers the service on schedule. Otherwise
-                    // enable the service itself.
-                    let kind = if service.timer_file_content.is_some() {
-                        UnitKind::Timer
-                    } else {
-                        UnitKind::Service
-                    };
-                    manager.enable_now(&session, &service.name, kind).await?;
-                }
+                // For a timer-backed service it's the timer that gets enabled —
+                // it triggers the service on schedule. Otherwise enable the
+                // service itself.
+                let kind = if service.timer_file_content.is_some() {
+                    UnitKind::Timer
+                } else {
+                    UnitKind::Service
+                };
+                // Always enable, so the unit survives a reboot. `start=false`
+                // only defers starting it — typically because the binary lands
+                // in a later deploy — and `systemctl enable` doesn't need the
+                // binary to exist.
+                manager.enable(&session, &service.name, kind, service.start).await?;
                 Ok(())
             }
         }

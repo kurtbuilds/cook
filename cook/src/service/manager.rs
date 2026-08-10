@@ -80,8 +80,11 @@ pub trait ServiceManager: Send + Sync {
     /// `daemon-reload`); on platforms that don't need it this is a no-op.
     async fn reload(&self, session: &openssh::Session) -> Result<(), Error>;
 
-    /// Enable a unit so that it runs now and on boot.
-    async fn enable_now(&self, session: &openssh::Session, name: &str, kind: UnitKind) -> Result<(), Error>;
+    /// Enable a unit so that it comes up on boot, and start it right away when
+    /// `start` is set. Registering a unit and starting it are separate concerns:
+    /// a unit whose binary is deployed later can be enabled now and started by
+    /// the deploy, which is what `start=false` in a Cookfile means.
+    async fn enable(&self, session: &openssh::Session, name: &str, kind: UnitKind, start: bool) -> Result<(), Error>;
 }
 
 /// systemd-backed service management (Linux).
@@ -127,19 +130,17 @@ impl ServiceManager for Systemd {
         Ok(())
     }
 
-    async fn enable_now(&self, session: &openssh::Session, name: &str, kind: UnitKind) -> Result<(), Error> {
+    async fn enable(&self, session: &openssh::Session, name: &str, kind: UnitKind, start: bool) -> Result<(), Error> {
         let unit = self.unit_name(name, kind);
-        let success = session
-            .command("systemctl")
-            .arg("enable")
-            .arg("--now")
-            .arg(&unit)
-            .output()
-            .await?
-            .status
-            .success();
+        let mut cmd = session.command("systemctl");
+        cmd.arg("enable");
+        if start {
+            cmd.arg("--now");
+        }
+        let success = cmd.arg(&unit).output().await?.status.success();
         if !success {
-            return Err(anyhow::anyhow!("`systemctl enable --now {unit}` failed").into());
+            let now = if start { " --now" } else { "" };
+            return Err(anyhow::anyhow!("`systemctl enable{now} {unit}` failed").into());
         }
         Ok(())
     }
@@ -182,7 +183,7 @@ impl ServiceManager for Launchd {
         Err(launchd_unsupported())
     }
 
-    async fn enable_now(&self, _session: &openssh::Session, _name: &str, _kind: UnitKind) -> Result<(), Error> {
+    async fn enable(&self, _session: &openssh::Session, _name: &str, _kind: UnitKind, _start: bool) -> Result<(), Error> {
         Err(launchd_unsupported())
     }
 }
