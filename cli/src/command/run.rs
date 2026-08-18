@@ -1,8 +1,10 @@
 use clap::Parser;
 use colored::Colorize;
 use cook::State;
+use futures::{FutureExt, StreamExt, future::LocalBoxFuture, stream::FuturesUnordered};
 use openssh::Session;
 use serde::Serialize;
+use std::collections::{BTreeSet, VecDeque};
 use std::fmt::Display;
 use std::ops::Range;
 use std::sync::Arc;
@@ -118,7 +120,7 @@ pub fn serialize_structured<T: erased_serde::Serialize + ?Sized>(format: Format,
 }
 
 /// The result of running one unit.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum UnitOutcome {
     /// Completed; carries the serialized modification outputs.
     Done(Arc<Vec<String>>),
@@ -128,10 +130,14 @@ enum UnitOutcome {
     Failed(Arc<str>),
 }
 
+type UnitTask<'a> = LocalBoxFuture<'a, Vec<(usize, UnitOutcome)>>;
+
 /// Apply the config to one host, honoring sequencing directives.
 ///
-/// Units run in dependency order. A `requires` dependency that fails causes its
-/// dependents to be skipped rather than aborting the whole run.
+/// Units run as soon as their ordering dependencies have completed. Independent
+/// units can run concurrently over the shared SSH session. A `requires`
+/// dependency that fails causes its dependents to be skipped rather than
+/// aborting the whole run.
 ///
 /// Returns `true` if no unit failed.
 pub async fn run_over_ssh(cli: &Cli, session: Session, state: &State, host: &str) -> bool {
@@ -141,33 +147,49 @@ pub async fn run_over_ssh(cli: &Cli, session: Session, state: &State, host: &str
         .build_schedule()
         .unwrap_or_else(|e| panic!("invalid sequencing in config: {e}"));
 
-    let mut outcomes: Vec<Option<UnitOutcome>> = vec![None; units.len()];
-    for &u in &schedule.topo_order {
-        let mut skip = false;
-        for &dep in &schedule.deps[u].after {
-            let outcome = outcomes[dep]
-                .as_ref()
-                .expect("topological order guarantees dependencies are built first");
-            if schedule.deps[u].requires.contains(&dep) && !matches!(outcome, UnitOutcome::Done(_)) {
-                skip = true;
+    let package_units: Vec<Option<Vec<String>>> = units
+        .iter()
+        .map(|unit| package_names_in_unit(state, unit.rules.clone()))
+        .collect();
+
+    let outcomes = run_scheduled_units(&schedule, |ready| {
+        let mut package_batch = Vec::new();
+        let mut tasks: Vec<UnitTask<'_>> = Vec::new();
+
+        for u in ready {
+            if let Some(packages) = &package_units[u] {
+                package_batch.push(PackageUnit {
+                    index: u,
+                    qualified: units[u].qualified(),
+                    packages: packages.clone(),
+                });
+                continue;
             }
+
+            let session = session.clone();
+            let range = units[u].rules.clone();
+            let qualified = units[u].qualified();
+            tasks.push(
+                async move {
+                    debug!(unit = %qualified, "Starting unit");
+                    let outcome = match run_unit_rules(cli, state, session, range).await {
+                        Ok(outputs) => UnitOutcome::Done(Arc::new(outputs)),
+                        Err(e) => UnitOutcome::Failed(Arc::from(format!("unit '{qualified}': {e}"))),
+                    };
+                    vec![(u, outcome)]
+                }
+                .boxed_local(),
+            );
         }
 
-        let outcome = if skip {
-            UnitOutcome::Skipped
-        } else {
-            match run_unit_rules(cli, state, session.clone(), units[u].rules.clone()).await {
-                Ok(outputs) => UnitOutcome::Done(Arc::new(outputs)),
-                Err(e) => UnitOutcome::Failed(Arc::from(format!("unit '{}': {e}", units[u].qualified()))),
-            }
-        };
-        outcomes[u] = Some(outcome);
-    }
+        if !package_batch.is_empty() {
+            let session = session.clone();
+            tasks.push(async move { run_package_units(cli, session, package_batch).await }.boxed_local());
+        }
 
-    let outcomes: Vec<UnitOutcome> = outcomes
-        .into_iter()
-        .map(|outcome| outcome.expect("all units built"))
-        .collect();
+        tasks
+    })
+    .await;
 
     let mut count = 0;
     let mut ok = true;
@@ -208,6 +230,199 @@ pub async fn run_over_ssh(cli: &Cli, session: Session, state: &State, host: &str
     ok
 }
 
+/// Run units as a dependency graph. Independent units are polled together; a
+/// dependent becomes runnable once every `after` dependency has completed.
+async fn run_scheduled_units<'a, F>(schedule: &cook::Schedule, mut run_ready_units: F) -> Vec<UnitOutcome>
+where
+    F: FnMut(Vec<usize>) -> Vec<UnitTask<'a>>,
+{
+    let n = schedule.deps.len();
+    let mut remaining_after: Vec<usize> = schedule.deps.iter().map(|deps| deps.after.len()).collect();
+    let mut dependents: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for (u, deps) in schedule.deps.iter().enumerate() {
+        for &dep in &deps.after {
+            dependents[dep].push(u);
+        }
+    }
+
+    let mut ready: VecDeque<usize> = schedule
+        .topo_order
+        .iter()
+        .copied()
+        .filter(|&u| remaining_after[u] == 0)
+        .collect();
+    let mut running = FuturesUnordered::new();
+    let mut outcomes: Vec<Option<UnitOutcome>> = vec![None; n];
+    let mut finished = 0;
+
+    while finished < n {
+        let mut runnable = Vec::new();
+        while let Some(u) = ready.pop_front() {
+            let skip = schedule.deps[u].requires.iter().any(|&dep| {
+                !matches!(
+                    outcomes[dep].as_ref().expect("ready unit has completed dependencies"),
+                    UnitOutcome::Done(_)
+                )
+            });
+
+            if skip {
+                outcomes[u] = Some(UnitOutcome::Skipped);
+                finished += 1;
+                for &dependent in &dependents[u] {
+                    remaining_after[dependent] -= 1;
+                    if remaining_after[dependent] == 0 {
+                        ready.push_back(dependent);
+                    }
+                }
+                continue;
+            }
+
+            runnable.push(u);
+        }
+
+        if !runnable.is_empty() {
+            for task in run_ready_units(runnable) {
+                running.push(task);
+            }
+        }
+
+        if finished == n {
+            break;
+        }
+
+        let Some(completed) = running.next().await else {
+            panic!("scheduler stalled with unfinished units");
+        };
+        for (u, outcome) in completed {
+            outcomes[u] = Some(outcome);
+            finished += 1;
+            for &dependent in &dependents[u] {
+                remaining_after[dependent] -= 1;
+                if remaining_after[dependent] == 0 {
+                    ready.push_back(dependent);
+                }
+            }
+        }
+    }
+
+    outcomes
+        .into_iter()
+        .map(|outcome| outcome.expect("all units built"))
+        .collect()
+}
+
+#[derive(Debug)]
+struct PackageUnit {
+    index: usize,
+    qualified: String,
+    packages: Vec<String>,
+}
+
+#[derive(Serialize)]
+enum PackageOutput {
+    AddPackage(PackageOutputSpec),
+}
+
+#[derive(Serialize)]
+struct PackageOutputSpec {
+    name: String,
+}
+
+fn package_names_in_unit(state: &State, range: Range<usize>) -> Option<Vec<String>> {
+    let mut packages = Vec::new();
+    for i in range {
+        let rule = &state.rules()[i];
+        if rule.kind() != "package" {
+            return None;
+        }
+        packages.push(rule.identifier().to_string());
+    }
+    (!packages.is_empty()).then_some(packages)
+}
+
+async fn run_package_units(cli: &Cli, session: Arc<Session>, units: Vec<PackageUnit>) -> Vec<(usize, UnitOutcome)> {
+    let mut all_packages = BTreeSet::new();
+    for unit in &units {
+        for package in &unit.packages {
+            all_packages.insert(package.clone());
+        }
+    }
+    let all_packages: Vec<String> = all_packages.into_iter().collect();
+    debug!(packages = ?all_packages, "Checking package batch");
+
+    let missing = match missing_packages_ssh(&session, &all_packages).await {
+        Ok(missing) => missing,
+        Err(e) => return package_batch_failed(units, format!("package batch check failed: {e}")),
+    };
+
+    if !missing.is_empty()
+        && let Err(e) = install_packages_ssh(session, &missing).await
+    {
+        return package_batch_failed(units, format!("package batch install failed: {e}"));
+    }
+
+    units
+        .into_iter()
+        .map(|unit| {
+            let outputs = unit
+                .packages
+                .into_iter()
+                .filter(|package| missing.contains(package))
+                .map(|name| serialize_structured(cli.format, &PackageOutput::AddPackage(PackageOutputSpec { name })))
+                .collect();
+            (unit.index, UnitOutcome::Done(Arc::new(outputs)))
+        })
+        .collect()
+}
+
+fn package_batch_failed(units: Vec<PackageUnit>, message: String) -> Vec<(usize, UnitOutcome)> {
+    units
+        .into_iter()
+        .map(|unit| {
+            (
+                unit.index,
+                UnitOutcome::Failed(Arc::from(format!("unit '{}': {message}", unit.qualified))),
+            )
+        })
+        .collect()
+}
+
+async fn missing_packages_ssh(session: &Session, packages: &[String]) -> Result<BTreeSet<String>, cook::Error> {
+    if packages.is_empty() {
+        return Ok(BTreeSet::new());
+    }
+
+    let mut command = session.command("dpkg-query");
+    command
+        .arg("-W")
+        .arg("-f=${binary:Package}\\n")
+        .arg("--")
+        .args(packages);
+    let output = command.output().await?;
+    let stdout = String::from_utf8(output.stdout)?;
+    let installed: BTreeSet<&str> = stdout.lines().collect();
+
+    Ok(packages
+        .iter()
+        .filter(|package| !installed.contains(package.as_str()))
+        .cloned()
+        .collect())
+}
+
+async fn install_packages_ssh(session: Arc<Session>, packages: &BTreeSet<String>) -> Result<(), cook::Error> {
+    let mut command = session.command("apt");
+    command.arg("install").arg("-y").args(packages);
+    let status = command.output().await?.status;
+    if !status.success() {
+        return Err(format!(
+            "apt install failed for {}",
+            packages.iter().cloned().collect::<Vec<_>>().join(", ")
+        )
+        .into());
+    }
+    Ok(())
+}
+
 /// Run all rules in a unit in order. Each rule checks itself, then applies its
 /// modifications in order. Returns the serialized outputs of every modification
 /// applied, or the first error encountered.
@@ -237,4 +452,120 @@ async fn run_unit_rules(
         }
     }
     Ok(outputs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cook::{Schedule, UnitDeps};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    fn empty_deps() -> UnitDeps {
+        UnitDeps {
+            after: Vec::new(),
+            requires: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn independent_units_are_scheduled_concurrently() {
+        let schedule = Schedule {
+            topo_order: vec![0, 1, 2],
+            deps: vec![empty_deps(), empty_deps(), empty_deps()],
+        };
+        let running = Arc::new(AtomicUsize::new(0));
+        let max_running = Arc::new(AtomicUsize::new(0));
+
+        let outcomes = run_scheduled_units(&schedule, |ready| {
+            ready
+                .into_iter()
+                .map(|u| {
+                    let running = running.clone();
+                    let max_running = max_running.clone();
+                    async move {
+                        let now = running.fetch_add(1, Ordering::SeqCst) + 1;
+                        max_running.fetch_max(now, Ordering::SeqCst);
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                        running.fetch_sub(1, Ordering::SeqCst);
+                        vec![(u, UnitOutcome::Done(Arc::new(vec![u.to_string()])))]
+                    }
+                    .boxed_local()
+                })
+                .collect()
+        })
+        .await;
+
+        assert!(
+            max_running.load(Ordering::SeqCst) > 1,
+            "independent units did not overlap"
+        );
+        assert!(outcomes.iter().all(|outcome| matches!(outcome, UnitOutcome::Done(_))));
+    }
+
+    #[tokio::test]
+    async fn requires_dependency_failure_skips_dependent_unit() {
+        let schedule = Schedule {
+            topo_order: vec![0, 1],
+            deps: vec![
+                empty_deps(),
+                UnitDeps {
+                    after: vec![0],
+                    requires: vec![0],
+                },
+            ],
+        };
+        let started = Arc::new(AtomicUsize::new(0));
+
+        let outcomes = run_scheduled_units(&schedule, |ready| {
+            ready
+                .into_iter()
+                .map(|u| {
+                    let started = started.clone();
+                    async move {
+                        started.fetch_add(1, Ordering::SeqCst);
+                        let outcome = if u == 0 {
+                            UnitOutcome::Failed(Arc::from("failed"))
+                        } else {
+                            UnitOutcome::Done(Arc::new(Vec::new()))
+                        };
+                        vec![(u, outcome)]
+                    }
+                    .boxed_local()
+                })
+                .collect()
+        })
+        .await;
+
+        assert_eq!(started.load(Ordering::SeqCst), 1, "skipped unit should not run");
+        assert!(matches!(outcomes[0], UnitOutcome::Failed(_)));
+        assert!(matches!(outcomes[1], UnitOutcome::Skipped));
+    }
+
+    #[tokio::test]
+    async fn scheduler_offers_ready_units_together_for_batching() {
+        let schedule = Schedule {
+            topo_order: vec![0, 1, 2],
+            deps: vec![empty_deps(), empty_deps(), empty_deps()],
+        };
+        let batch_count = Arc::new(AtomicUsize::new(0));
+
+        let outcomes = run_scheduled_units(&schedule, |ready| {
+            let batch_count = batch_count.clone();
+            vec![
+                async move {
+                    batch_count.fetch_add(1, Ordering::SeqCst);
+                    ready
+                        .into_iter()
+                        .map(|u| (u, UnitOutcome::Done(Arc::new(Vec::new()))))
+                        .collect()
+                }
+                .boxed_local(),
+            ]
+        })
+        .await;
+
+        assert_eq!(batch_count.load(Ordering::SeqCst), 1);
+        assert!(outcomes.iter().all(|outcome| matches!(outcome, UnitOutcome::Done(_))));
+    }
 }
