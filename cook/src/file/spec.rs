@@ -228,7 +228,7 @@ impl Rule for FileSpec {
 #[cfg(feature = "ssh")]
 #[async_trait::async_trait]
 impl RuleOverSsh for FileSpec {
-    async fn check_ssh(&self, session: &openssh::Session) -> Result<Vec<Box<dyn Modification>>, Error> {
+    async fn check_ssh(&self, session: &crate::ssh::Session) -> Result<Vec<Box<dyn Modification>>, Error> {
         let path = self.path.to_str().ok_or("file path is not valid utf-8")?;
         let needs_upload = match &self.content {
             FileContent::Content(_, sha256) => {
@@ -237,7 +237,14 @@ impl RuleOverSsh for FileSpec {
                 let remote_hash = output.split_whitespace().next().unwrap_or_default();
                 sha256 != remote_hash
             }
-            FileContent::Url(_) => !session.command("test").arg("-f").arg(path).output().await?.status.success(),
+            FileContent::Url(_) => !session
+                .command("test")
+                .arg("-f")
+                .arg(path)
+                .output()
+                .await?
+                .status
+                .success(),
         };
 
         // An upload sets the mode on its way out, so it subsumes a mode change.
@@ -299,7 +306,7 @@ impl Rule for FileSetSpec {
 #[cfg(feature = "ssh")]
 #[async_trait::async_trait]
 impl RuleOverSsh for FileSetSpec {
-    async fn check_ssh(&self, session: &openssh::Session) -> Result<Vec<Box<dyn Modification>>, Error> {
+    async fn check_ssh(&self, session: &crate::ssh::Session) -> Result<Vec<Box<dyn Modification>>, Error> {
         // Hash every existing file under `root` in a single round-trip. `find`
         // errors (e.g. missing root) are swallowed so it degrades to "no remote
         // files", which makes every local file appear missing and get uploaded.
@@ -435,8 +442,7 @@ impl Modification for FileChange {
 #[cfg(feature = "ssh")]
 #[async_trait::async_trait]
 impl ModificationOverSsh for FileChange {
-    async fn apply_ssh(&self, session: std::sync::Arc<openssh::Session>) -> Result<(), Error> {
-        use openssh_sftp_client::{Sftp, SftpOptions};
+    async fn apply_ssh(&self, session: std::sync::Arc<crate::ssh::Session>) -> Result<(), Error> {
         match self {
             FileChange::MissingFile(file) => {
                 session
@@ -447,10 +453,11 @@ impl ModificationOverSsh for FileChange {
                     .await?;
                 match &file.content {
                     FileContent::Content(content, _) => {
-                        let sftp = Sftp::from_clonable_session(session.clone(), SftpOptions::new()).await?;
+                        let sftp = session.sftp().await?;
                         let mut f = sftp.create(file.path.to_str().unwrap()).await?;
                         f.write_all(&content).await?;
                         f.close().await?;
+                        sftp.close().await?;
                     }
                     FileContent::Url(url) => {
                         // Download file using curl over SSH and save to the target path
@@ -480,7 +487,7 @@ impl ModificationOverSsh for FileChange {
 }
 
 #[cfg(feature = "ssh")]
-async fn chmod(session: &openssh::Session, path: &Path, mode: u32) -> Result<(), Error> {
+async fn chmod(session: &crate::ssh::Session, path: &Path, mode: u32) -> Result<(), Error> {
     let path = path.to_str().ok_or("file path is not valid utf-8")?;
     let output = session
         .command("chmod")

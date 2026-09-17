@@ -44,7 +44,7 @@ impl Rule for PackageSpec {
 #[cfg(feature = "ssh")]
 #[async_trait::async_trait]
 impl RuleOverSsh for PackageSpec {
-    async fn check_ssh(&self, session: &openssh::Session) -> Result<Vec<Box<dyn Modification>>, Error> {
+    async fn check_ssh(&self, session: &crate::ssh::Session) -> Result<Vec<Box<dyn Modification>>, Error> {
         let output = session
             .command("apt")
             .arg("-qq")
@@ -91,7 +91,7 @@ impl Modification for PackageChange {
 #[cfg(feature = "ssh")]
 #[async_trait::async_trait]
 impl ModificationOverSsh for PackageChange {
-    async fn apply_ssh(&self, session: std::sync::Arc<openssh::Session>) -> Result<(), Error> {
+    async fn apply_ssh(&self, session: std::sync::Arc<crate::ssh::Session>) -> Result<(), Error> {
         match self {
             PackageChange::AddPackage(spec) => {
                 let success = session

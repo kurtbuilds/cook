@@ -6,6 +6,8 @@ mod kdl;
 mod package;
 mod seq;
 mod service;
+#[cfg(feature = "ssh")]
+pub mod ssh;
 mod user;
 mod which;
 
@@ -66,7 +68,7 @@ pub trait Rule: erased_serde::Serialize + std::fmt::Debug + Send + Sync + 'stati
 pub trait RuleOverSsh: Rule {
     /// check the rule over ssh
     #[cfg(feature = "ssh")]
-    async fn check_ssh(&self, session: &openssh::Session) -> Result<Vec<Box<dyn Modification>>, Error>;
+    async fn check_ssh(&self, session: &crate::ssh::Session) -> Result<Vec<Box<dyn Modification>>, Error>;
 }
 
 /// defines how a rule will be applied to a system/resource
@@ -86,7 +88,7 @@ pub trait Modification: erased_serde::Serialize + Send + Sync + 'static {
 #[async_trait]
 pub trait ModificationOverSsh {
     #[cfg(feature = "ssh")]
-    async fn apply_ssh(&self, session: std::sync::Arc<openssh::Session>) -> Result<(), Error>;
+    async fn apply_ssh(&self, session: std::sync::Arc<crate::ssh::Session>) -> Result<(), Error>;
 }
 
 pub type Error = Box<dyn std::error::Error + Send + Sync + 'static>;

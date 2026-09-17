@@ -70,9 +70,11 @@ fn main() {
         cli.host = state.hosts();
     }
 
-    if cli.verbose {
-        tracing_subscriber::fmt().with_max_level(LevelFilter::DEBUG).init();
-    }
+    let log_level = if cli.verbose { LevelFilter::DEBUG } else { LevelFilter::WARN };
+    tracing_subscriber::fmt()
+        .with_max_level(log_level)
+        .with_writer(std::io::stderr)
+        .init();
 
     match &cli.command {
         Command::Install(install) => {

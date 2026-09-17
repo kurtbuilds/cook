@@ -183,7 +183,7 @@ fn sha256_hex(content: &str) -> String {
 #[cfg(feature = "ssh")]
 #[async_trait::async_trait]
 impl RuleOverSsh for ServiceSpec {
-    async fn check_ssh(&self, session: &openssh::Session) -> Result<Vec<Box<dyn Modification>>, Error> {
+    async fn check_ssh(&self, session: &crate::ssh::Session) -> Result<Vec<Box<dyn Modification>>, Error> {
         let manager = Platform::detect(session).await?.service_manager();
 
         let service_file_path = manager.unit_path(&self.name, UnitKind::Service);
@@ -279,7 +279,7 @@ impl RemoteOwner {
 /// Ownership of `path` on the remote host, or `None` if it is not a directory
 /// there (missing, or something else in its place — `mkdir -p` reports which).
 #[cfg(feature = "ssh")]
-async fn remote_owner(session: &openssh::Session, path: &str) -> Result<Option<RemoteOwner>, Error> {
+async fn remote_owner(session: &crate::ssh::Session, path: &str) -> Result<Option<RemoteOwner>, Error> {
     // One round-trip for existence and ownership. `test -d` first so a
     // non-directory is reported as absent rather than as a wrong owner.
     let script = format!("test -d {p} && stat -c '%U %G %u %g' {p}", p = sh_single_quote(path));
@@ -308,7 +308,7 @@ async fn remote_owner(session: &openssh::Session, path: &str) -> Result<Option<R
 /// `chown` to use that user's login group — the same group systemd would run
 /// the process under.
 #[cfg(feature = "ssh")]
-async fn chown(session: &openssh::Session, path: &str, owner: &ServiceOwner) -> Result<(), Error> {
+async fn chown(session: &crate::ssh::Session, path: &str, owner: &ServiceOwner) -> Result<(), Error> {
     let spec = format!("{}:{}", owner.user, owner.group.as_deref().unwrap_or_default());
     let status = session.command("chown").arg(&spec).arg(path).status().await?;
     if !status.success() {
@@ -355,8 +355,7 @@ impl Modification for ServiceChange {
 #[cfg(feature = "ssh")]
 #[async_trait::async_trait]
 impl ModificationOverSsh for ServiceChange {
-    async fn apply_ssh(&self, session: std::sync::Arc<openssh::Session>) -> Result<(), Error> {
-        use openssh_sftp_client::{Sftp, SftpOptions};
+    async fn apply_ssh(&self, session: std::sync::Arc<crate::ssh::Session>) -> Result<(), Error> {
         match self {
             ServiceChange::MissingWorkingDirectory(missing) => {
                 let path = &missing.directory.path;
@@ -382,7 +381,7 @@ impl ModificationOverSsh for ServiceChange {
             ServiceChange::NewService(service) => {
                 let manager = Platform::detect(&session).await?.service_manager();
 
-                let sftp = Sftp::from_clonable_session(session.clone(), SftpOptions::new()).await?;
+                let sftp = session.sftp().await?;
                 let service_path = manager.unit_path(&service.name, UnitKind::Service);
                 let mut f = sftp.create(service_path).await?;
                 f.write_all(service.service_file_content.as_bytes()).await?;
@@ -394,6 +393,9 @@ impl ModificationOverSsh for ServiceChange {
                     f.write_all(timer_file_content.as_bytes()).await?;
                     f.close().await?;
                 }
+
+                // Release the SFTP session before opening a command session.
+                sftp.close().await?;
 
                 // Pick up the freshly written unit files (the "reload-daemon
                 // dance" that `ser` used to do for us).

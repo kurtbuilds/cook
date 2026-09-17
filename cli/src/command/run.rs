@@ -1,8 +1,8 @@
 use clap::Parser;
 use colored::Colorize;
 use cook::State;
+use cook::ssh::Session;
 use futures::{FutureExt, StreamExt, future::LocalBoxFuture, stream::FuturesUnordered};
-use openssh::Session;
 use serde::Serialize;
 use std::collections::{BTreeSet, VecDeque};
 use std::fmt::Display;
@@ -18,9 +18,7 @@ pub struct Run {
 }
 
 pub async fn connect_ssh(host: &str) -> Session {
-    Session::connect_mux(host, openssh::KnownHosts::Strict)
-        .await
-        .expect("Failed to connect to host")
+    Session::connect(host).await.expect("Failed to connect to host")
 }
 
 pub async fn check_cook_agent(session: &Session) -> Option<String> {

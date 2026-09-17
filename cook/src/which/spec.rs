@@ -109,7 +109,7 @@ impl Rule for WhichSpec {
 #[cfg(feature = "ssh")]
 #[async_trait::async_trait]
 impl RuleOverSsh for WhichSpec {
-    async fn check_ssh(&self, session: &openssh::Session) -> Result<Vec<Box<dyn Modification>>, Error> {
+    async fn check_ssh(&self, session: &crate::ssh::Session) -> Result<Vec<Box<dyn Modification>>, Error> {
         let mut changes: Vec<Box<dyn Modification>> = Vec::new();
         let success = session.command("which").arg(&self.bin).output().await?.status.success();
         if !success {
@@ -158,7 +158,7 @@ impl Modification for WhichChange {
 #[cfg(feature = "ssh")]
 #[async_trait::async_trait]
 impl crate::ModificationOverSsh for WhichChange {
-    async fn apply_ssh(&self, session: std::sync::Arc<openssh::Session>) -> Result<(), Error> {
+    async fn apply_ssh(&self, session: std::sync::Arc<crate::ssh::Session>) -> Result<(), Error> {
         let WhichChange::RunScript { bin, script } = self;
         // Install scripts are multi-line shell, so they go through `sh -c`
         // rather than being split into a command + args.

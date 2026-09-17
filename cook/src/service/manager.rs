@@ -36,7 +36,7 @@ impl Platform {
     /// This is the OS that will *execute* the service commands, which is
     /// distinct from the OS of the machine running cook — hence we ask the
     /// remote via `uname -s` rather than consulting a compile-time `cfg`.
-    pub async fn detect(session: &openssh::Session) -> Result<Platform, Error> {
+    pub async fn detect(session: &crate::ssh::Session) -> Result<Platform, Error> {
         let output = session.command("uname").arg("-s").output().await?;
         if !output.status.success() {
             return Err(anyhow::anyhow!("failed to detect remote platform via `uname -s`").into());
@@ -73,18 +73,19 @@ pub trait ServiceManager: Send + Sync {
     /// The sha256 of a remote file, or `None` if it does not exist. Used to
     /// decide whether a unit file needs (re)writing. The hashing command itself
     /// differs by platform (`sha256sum` vs `shasum`).
-    async fn remote_checksum(&self, session: &openssh::Session, path: &str) -> Result<Option<String>, Error>;
+    async fn remote_checksum(&self, session: &crate::ssh::Session, path: &str) -> Result<Option<String>, Error>;
 
     /// Re-read unit definitions after unit files change. This is the
     /// "reload-daemon dance" that `ser` performs automatically (systemd
     /// `daemon-reload`); on platforms that don't need it this is a no-op.
-    async fn reload(&self, session: &openssh::Session) -> Result<(), Error>;
+    async fn reload(&self, session: &crate::ssh::Session) -> Result<(), Error>;
 
     /// Enable a unit so that it comes up on boot, and start it right away when
     /// `start` is set. Registering a unit and starting it are separate concerns:
     /// a unit whose binary is deployed later can be enabled now and started by
     /// the deploy, which is what `start=false` in a Cookfile means.
-    async fn enable(&self, session: &openssh::Session, name: &str, kind: UnitKind, start: bool) -> Result<(), Error>;
+    async fn enable(&self, session: &crate::ssh::Session, name: &str, kind: UnitKind, start: bool)
+    -> Result<(), Error>;
 }
 
 /// systemd-backed service management (Linux).
@@ -102,7 +103,7 @@ impl ServiceManager for Systemd {
         format!("/etc/systemd/system/{name}.{ext}")
     }
 
-    async fn remote_checksum(&self, session: &openssh::Session, path: &str) -> Result<Option<String>, Error> {
+    async fn remote_checksum(&self, session: &crate::ssh::Session, path: &str) -> Result<Option<String>, Error> {
         let output = session.command("sha256sum").arg(path).output().await?;
         if !output.status.success() {
             // A failed `sha256sum` (e.g. missing file) means "not present".
@@ -116,7 +117,7 @@ impl ServiceManager for Systemd {
         Ok(Some(sha))
     }
 
-    async fn reload(&self, session: &openssh::Session) -> Result<(), Error> {
+    async fn reload(&self, session: &crate::ssh::Session) -> Result<(), Error> {
         let success = session
             .command("systemctl")
             .arg("daemon-reload")
@@ -130,7 +131,13 @@ impl ServiceManager for Systemd {
         Ok(())
     }
 
-    async fn enable(&self, session: &openssh::Session, name: &str, kind: UnitKind, start: bool) -> Result<(), Error> {
+    async fn enable(
+        &self,
+        session: &crate::ssh::Session,
+        name: &str,
+        kind: UnitKind,
+        start: bool,
+    ) -> Result<(), Error> {
         let unit = self.unit_name(name, kind);
         let mut cmd = session.command("systemctl");
         cmd.arg("enable");
@@ -175,15 +182,21 @@ impl ServiceManager for Launchd {
         format!("/Library/LaunchDaemons/{name}.plist")
     }
 
-    async fn remote_checksum(&self, _session: &openssh::Session, _path: &str) -> Result<Option<String>, Error> {
+    async fn remote_checksum(&self, _session: &crate::ssh::Session, _path: &str) -> Result<Option<String>, Error> {
         Err(launchd_unsupported())
     }
 
-    async fn reload(&self, _session: &openssh::Session) -> Result<(), Error> {
+    async fn reload(&self, _session: &crate::ssh::Session) -> Result<(), Error> {
         Err(launchd_unsupported())
     }
 
-    async fn enable(&self, _session: &openssh::Session, _name: &str, _kind: UnitKind, _start: bool) -> Result<(), Error> {
+    async fn enable(
+        &self,
+        _session: &crate::ssh::Session,
+        _name: &str,
+        _kind: UnitKind,
+        _start: bool,
+    ) -> Result<(), Error> {
         Err(launchd_unsupported())
     }
 }

@@ -7,7 +7,7 @@ edition = "2024"
 default = ["atexit"]
 # This turns on exit serialization. You must really know what you're doing if you disable this feature.
 atexit = []
-ssh = ["openssh", "openssh-sftp-client"]
+ssh = ["openssh", "openssh-sftp-client", "dep:openssh-mux-client-error", "dep:tokio"]
 
 [dependencies]
 ctor = "0.6"
@@ -27,3 +27,10 @@ anyhow.workspace = true
 walkdir.workspace = true
 tracing.workspace = true
 globset.workspace = true
+
+openssh-mux-client-error = { version = "0.1.1", optional = true }
+tokio = { version = "1.48", features = ["sync", "time"], optional = true }
+
+[dev-dependencies]
+tokio = { version = "1.48", features = ["macros", "rt-multi-thread", "time"] }
+futures.workspace = true

@@ -28,6 +28,10 @@ cook up
 
 You've now configured the server!
 
+Cook runs independent units concurrently over one SSH connection. If the server
+refuses new sessions, Cook warns once and automatically queues session openings.
+See [SSH concurrency](docs/ssh.md).
+
 Here are some other common commands:
 
 Run a rule as a one-off:

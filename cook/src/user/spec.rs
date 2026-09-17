@@ -49,7 +49,7 @@ impl Rule for UserSpec {
 #[cfg(feature = "ssh")]
 #[async_trait::async_trait]
 impl RuleOverSsh for UserSpec {
-    async fn check_ssh(&self, session: &openssh::Session) -> Result<Vec<Box<dyn Modification>>, Error> {
+    async fn check_ssh(&self, session: &crate::ssh::Session) -> Result<Vec<Box<dyn Modification>>, Error> {
         let output = session.command("id").arg(&self.name).output().await?;
         if output.status.success() {
             Ok(vec![])
@@ -90,7 +90,7 @@ impl Modification for UserChange {
 #[cfg(feature = "ssh")]
 #[async_trait::async_trait]
 impl ModificationOverSsh for UserChange {
-    async fn apply_ssh(&self, _session: std::sync::Arc<openssh::Session>) -> Result<(), Error> {
+    async fn apply_ssh(&self, _session: std::sync::Arc<crate::ssh::Session>) -> Result<(), Error> {
         match self {
             UserChange::Add(user_spec) => {
                 let mut cmd = _session.command("useradd");
