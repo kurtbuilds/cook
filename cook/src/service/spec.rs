@@ -14,7 +14,10 @@ use crate::service::manager::{Platform, UnitKind};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceSpec {
     pub name: String,
-    pub service_file_content: String,
+    /// Content of the `.service` unit to install. `None` means the unit is not
+    /// cook's to write — a package installed it — and the node only declares
+    /// when to restart it.
+    pub service_file_content: Option<String>,
     pub start: bool,
     pub owner: Option<String>,
     /// Content of the `.timer` unit to install alongside the service, if any.
@@ -28,6 +31,10 @@ pub struct ServiceSpec {
     /// and the ownership the unit's `User=`/`Group=` need on it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub working_directory: Option<RequiredWorkingDirectory>,
+    /// Units whose changes restart this service, e.g. the `cp` of its config
+    /// file. See [`Rule::restart_on`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub restart_on: Vec<String>,
 }
 
 /// Build the content of a `.timer` unit that triggers `{name}.service` on the
@@ -56,18 +63,26 @@ impl FromKdl for ServiceSpec {
         &["service"]
     }
     fn add_rules_to_state(state: &mut crate::State, node: &kdl::KdlNode, context: &crate::Context) {
-        let mut entries = node.entries().iter();
+        let mut entries = node.entries().iter().peekable();
         let name = entries.next().unwrap().expect_str().to_string();
-        let service_file_path = entries.next().unwrap().expect_str();
-        let path = context.local_path(service_file_path);
-        let service_file_content = fs::read_to_string(path).expect("Failed to read service file");
+        // The unit file is optional: without one, the node manages only the
+        // restarts of a unit that a package already installed.
+        let service_file_content = entries.next_if(|e| e.name().is_none()).map(|e| {
+            let path = context.local_path(e.expect_str());
+            fs::read_to_string(path).expect("Failed to read service file")
+        });
         let mut start = true;
         let mut owner = None;
         let mut timer_file: Option<String> = None;
         let mut on_calendar: Option<String> = None;
         let mut persistent = true;
-        while let Some(e) = entries.next() {
-            match e.name().expect("Failed to get node name").value() {
+        let mut restart_on = Vec::new();
+        for e in entries {
+            let key = e.name().expect("Failed to get node name").value();
+            if service_file_content.is_none() && key != "restart_on" {
+                panic!("service {name}: `{key}` needs a unit file; without one, only `restart_on` applies");
+            }
+            match key {
                 "start" => start = e.value().as_bool().expect("Value for start is not a bool"),
                 "owner" => owner = Some(e.expect_str().to_string()),
                 "timer" => {
@@ -77,6 +92,7 @@ impl FromKdl for ServiceSpec {
                 }
                 "on_calendar" => on_calendar = Some(e.expect_str().to_string()),
                 "persistent" => persistent = e.value().as_bool().expect("Value for persistent is not a bool"),
+                "restart_on" => restart_on.extend(e.expect_str().split_whitespace().map(str::to_string)),
                 z => panic!("Unexpected option for service: {}", z),
             }
         }
@@ -93,7 +109,9 @@ impl FromKdl for ServiceSpec {
             (None, None) => None,
         };
 
-        let working_directory = crate::service::unit::required_working_directory(&service_file_content);
+        let working_directory = service_file_content
+            .as_deref()
+            .and_then(crate::service::unit::required_working_directory);
 
         state.add_rule(ServiceSpec {
             name,
@@ -102,6 +120,7 @@ impl FromKdl for ServiceSpec {
             owner,
             timer_file_content,
             working_directory,
+            restart_on,
         });
     }
 }
@@ -119,9 +138,15 @@ impl Rule for ServiceSpec {
     /// chowns the working directory to that user and starts the unit under it,
     /// so a `user` node for it has to run first.
     fn implied_after(&self) -> Vec<String> {
-        crate::service::unit::service_owner(&self.service_file_content)
+        self.service_file_content
+            .as_deref()
+            .and_then(crate::service::unit::service_owner)
             .map(|owner| vec![format!("user:{}", owner.user)])
             .unwrap_or_default()
+    }
+
+    fn restart_on(&self) -> &[String] {
+        &self.restart_on
     }
 
     #[cfg(feature = "ssh")]
@@ -139,6 +164,14 @@ pub enum ServiceChange {
     MissingWorkingDirectory(MissingWorkingDirectory),
     WrongWorkingDirectoryOwner(WrongWorkingDirectoryOwner),
     NewService(NewService),
+    Restart(Restart),
+}
+
+/// The service is running, but its unit file or a unit in `restart_on`
+/// changed, so the running process has stale configuration.
+#[derive(Debug, Serialize)]
+pub struct Restart {
+    pub name: String,
 }
 
 /// The unit's `WorkingDirectory=` does not exist on the target. systemd refuses
@@ -184,63 +217,83 @@ fn sha256_hex(content: &str) -> String {
 #[async_trait::async_trait]
 impl RuleOverSsh for ServiceSpec {
     async fn check_ssh(&self, session: &crate::ssh::Session) -> Result<Vec<Box<dyn Modification>>, Error> {
+        self.check_ssh_with(session, false).await
+    }
+
+    async fn check_ssh_with(
+        &self,
+        session: &crate::ssh::Session,
+        restart_on_changed: bool,
+    ) -> Result<Vec<Box<dyn Modification>>, Error> {
         let manager = Platform::detect(session).await?.service_manager();
-
-        let service_file_path = manager.unit_path(&self.name, UnitKind::Service);
-        let local_service_sha256 = sha256_hex(&self.service_file_content);
-        let remote_service_sha256 = manager.remote_checksum(session, &service_file_path).await?;
-        // The service needs (re)writing if it's missing or its content differs.
-        let service_changed = remote_service_sha256.as_deref() != Some(local_service_sha256.as_str());
-
-        // Mirror the same check for the optional timer unit.
-        let local_timer_sha256 = self.timer_file_content.as_deref().map(sha256_hex);
-        let timer_changed = if self.timer_file_content.is_some() {
-            let timer_file_path = manager.unit_path(&self.name, UnitKind::Timer);
-            let remote_timer_sha256 = manager.remote_checksum(session, &timer_file_path).await?;
-            remote_timer_sha256.as_deref() != local_timer_sha256.as_deref()
-        } else {
-            false
-        };
-
         let mut changes: Vec<Box<dyn Modification>> = Vec::new();
 
-        // The working directory is checked independently of the unit files: it
-        // can go missing (or be left root-owned by an earlier run) on a host
-        // whose units are already up to date, and it has to be right *before*
-        // the unit is enabled, so this change is ordered ahead of the install.
-        if let Some(directory) = &self.working_directory {
-            match remote_owner(session, &directory.path).await? {
-                None => changes.push(Box::new(ServiceChange::MissingWorkingDirectory(
-                    MissingWorkingDirectory {
-                        service: self.name.clone(),
-                        directory: directory.clone(),
-                    },
-                ))),
-                Some(current) => {
-                    if let Some(owner) = &directory.owner
-                        && !current.satisfies(owner)
-                    {
-                        changes.push(Box::new(ServiceChange::WrongWorkingDirectoryOwner(
-                            WrongWorkingDirectoryOwner {
-                                service: self.name.clone(),
-                                path: directory.path.clone(),
-                                owner: owner.clone(),
-                                current: format!("{}:{}", current.user_name, current.group_name),
-                            },
-                        )));
+        let mut unit_changed = false;
+        if let Some(service_file_content) = &self.service_file_content {
+            let service_file_path = manager.unit_path(&self.name, UnitKind::Service);
+            let local_service_sha256 = sha256_hex(service_file_content);
+            let remote_service_sha256 = manager.remote_checksum(session, &service_file_path).await?;
+            // The service needs (re)writing if it's missing or its content differs.
+            let service_changed = remote_service_sha256.as_deref() != Some(local_service_sha256.as_str());
+
+            // Mirror the same check for the optional timer unit.
+            let local_timer_sha256 = self.timer_file_content.as_deref().map(sha256_hex);
+            let timer_changed = if self.timer_file_content.is_some() {
+                let timer_file_path = manager.unit_path(&self.name, UnitKind::Timer);
+                let remote_timer_sha256 = manager.remote_checksum(session, &timer_file_path).await?;
+                remote_timer_sha256.as_deref() != local_timer_sha256.as_deref()
+            } else {
+                false
+            };
+
+            // The working directory is checked independently of the unit files: it
+            // can go missing (or be left root-owned by an earlier run) on a host
+            // whose units are already up to date, and it has to be right *before*
+            // the unit is enabled, so this change is ordered ahead of the install.
+            if let Some(directory) = &self.working_directory {
+                match remote_owner(session, &directory.path).await? {
+                    None => changes.push(Box::new(ServiceChange::MissingWorkingDirectory(
+                        MissingWorkingDirectory {
+                            service: self.name.clone(),
+                            directory: directory.clone(),
+                        },
+                    ))),
+                    Some(current) => {
+                        if let Some(owner) = &directory.owner
+                            && !current.satisfies(owner)
+                        {
+                            changes.push(Box::new(ServiceChange::WrongWorkingDirectoryOwner(
+                                WrongWorkingDirectoryOwner {
+                                    service: self.name.clone(),
+                                    path: directory.path.clone(),
+                                    owner: owner.clone(),
+                                    current: format!("{}:{}", current.user_name, current.group_name),
+                                },
+                            )));
+                        }
                     }
                 }
             }
+
+            if service_changed || timer_changed {
+                unit_changed = true;
+                changes.push(Box::new(ServiceChange::NewService(NewService {
+                    name: self.name.clone(),
+                    service_file_content: service_file_content.clone(),
+                    service_file_content_sha256: local_service_sha256,
+                    start: self.start,
+                    timer_file_content: self.timer_file_content.clone(),
+                    timer_file_content_sha256: local_timer_sha256,
+                })));
+            }
         }
 
-        if service_changed || timer_changed {
-            changes.push(Box::new(ServiceChange::NewService(NewService {
+        // Only a running service has stale state. `enable --now` already
+        // starts a stopped one with the new files, and restarting a stopped
+        // timer-driven oneshot would run the job off schedule.
+        if (unit_changed || restart_on_changed) && manager.is_active(session, &self.name).await? {
+            changes.push(Box::new(ServiceChange::Restart(Restart {
                 name: self.name.clone(),
-                service_file_content: self.service_file_content.clone(),
-                service_file_content_sha256: local_service_sha256,
-                start: self.start,
-                timer_file_content: self.timer_file_content.clone(),
-                timer_file_content_sha256: local_timer_sha256,
             })));
         }
 
@@ -344,6 +397,7 @@ impl Modification for ServiceChange {
                 wrong.owner.group.as_deref().unwrap_or_default()
             ),
             ServiceChange::NewService(service) => write!(f, "new service {}", service.name),
+            ServiceChange::Restart(restart) => write!(f, "restart service {}", restart.name),
         }
     }
 
@@ -415,6 +469,10 @@ impl ModificationOverSsh for ServiceChange {
                 // binary to exist.
                 manager.enable(&session, &service.name, kind, service.start).await?;
                 Ok(())
+            }
+            ServiceChange::Restart(restart) => {
+                let manager = Platform::detect(&session).await?.service_manager();
+                manager.restart(&session, &restart.name).await
             }
         }
     }

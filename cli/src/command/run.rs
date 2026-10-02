@@ -154,7 +154,7 @@ pub async fn run_over_ssh(cli: &Cli, session: Session, state: &State, host: &str
         let mut package_batch = Vec::new();
         let mut tasks: Vec<UnitTask<'_>> = Vec::new();
 
-        for u in ready {
+        for (u, restart_on_changed) in ready {
             if let Some(packages) = &package_units[u] {
                 package_batch.push(PackageUnit {
                     index: u,
@@ -170,7 +170,7 @@ pub async fn run_over_ssh(cli: &Cli, session: Session, state: &State, host: &str
             tasks.push(
                 async move {
                     debug!(unit = %qualified, "Starting unit");
-                    let outcome = match run_unit_rules(cli, state, session, range).await {
+                    let outcome = match run_unit_rules(cli, state, session, range, restart_on_changed).await {
                         Ok(outputs) => UnitOutcome::Done(Arc::new(outputs)),
                         Err(e) => UnitOutcome::Failed(Arc::from(format!("unit '{qualified}': {e}"))),
                     };
@@ -230,9 +230,12 @@ pub async fn run_over_ssh(cli: &Cli, session: Session, state: &State, host: &str
 
 /// Run units as a dependency graph. Independent units are polled together; a
 /// dependent becomes runnable once every `after` dependency has completed.
+///
+/// Each ready unit is offered with a flag: whether any of its `restart_on`
+/// units applied a change in this run.
 async fn run_scheduled_units<'a, F>(schedule: &cook::Schedule, mut run_ready_units: F) -> Vec<UnitOutcome>
 where
-    F: FnMut(Vec<usize>) -> Vec<UnitTask<'a>>,
+    F: FnMut(Vec<(usize, bool)>) -> Vec<UnitTask<'a>>,
 {
     let n = schedule.deps.len();
     let mut remaining_after: Vec<usize> = schedule.deps.iter().map(|deps| deps.after.len()).collect();
@@ -275,7 +278,11 @@ where
                 continue;
             }
 
-            runnable.push(u);
+            let restart_on_changed = schedule.deps[u]
+                .restart_on
+                .iter()
+                .any(|&dep| matches!(&outcomes[dep], Some(UnitOutcome::Done(outputs)) if !outputs.is_empty()));
+            runnable.push((u, restart_on_changed));
         }
 
         if !runnable.is_empty() {
@@ -422,13 +429,14 @@ async fn install_packages_ssh(session: Arc<Session>, packages: &BTreeSet<String>
 }
 
 /// Run all rules in a unit in order. Each rule checks itself, then applies its
-/// modifications in order. Returns the serialized outputs of every modification
+/// modifications in order. `restart_on_changed` is passed to each check. Returns the serialized outputs of every modification
 /// applied, or the first error encountered.
 async fn run_unit_rules(
     cli: &Cli,
     state: &State,
     session: Arc<Session>,
     range: Range<usize>,
+    restart_on_changed: bool,
 ) -> Result<Vec<String>, cook::Error> {
     let rules = state.rules();
     let mut outputs = Vec::new();
@@ -438,7 +446,7 @@ async fn run_unit_rules(
         let rule = rule
             .downcast_ssh()
             .ok_or_else(|| cook::Error::from("rule cannot run over ssh"))?;
-        let modifications = rule.check_ssh(&session).await?;
+        let modifications = rule.check_ssh_with(&session, restart_on_changed).await?;
 
         for modification in modifications {
             let m = modification
@@ -463,6 +471,7 @@ mod tests {
         UnitDeps {
             after: Vec::new(),
             requires: Vec::new(),
+            restart_on: Vec::new(),
         }
     }
 
@@ -478,7 +487,7 @@ mod tests {
         let outcomes = run_scheduled_units(&schedule, |ready| {
             ready
                 .into_iter()
-                .map(|u| {
+                .map(|(u, _)| {
                     let running = running.clone();
                     let max_running = max_running.clone();
                     async move {
@@ -510,6 +519,7 @@ mod tests {
                 UnitDeps {
                     after: vec![0],
                     requires: vec![0],
+                    restart_on: Vec::new(),
                 },
             ],
         };
@@ -518,7 +528,7 @@ mod tests {
         let outcomes = run_scheduled_units(&schedule, |ready| {
             ready
                 .into_iter()
-                .map(|u| {
+                .map(|(u, _)| {
                     let started = started.clone();
                     async move {
                         started.fetch_add(1, Ordering::SeqCst);
@@ -555,7 +565,7 @@ mod tests {
                     batch_count.fetch_add(1, Ordering::SeqCst);
                     ready
                         .into_iter()
-                        .map(|u| (u, UnitOutcome::Done(Arc::new(Vec::new()))))
+                        .map(|(u, _)| (u, UnitOutcome::Done(Arc::new(Vec::new()))))
                         .collect()
                 }
                 .boxed_local(),

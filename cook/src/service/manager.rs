@@ -86,6 +86,12 @@ pub trait ServiceManager: Send + Sync {
     /// the deploy, which is what `start=false` in a Cookfile means.
     async fn enable(&self, session: &crate::ssh::Session, name: &str, kind: UnitKind, start: bool)
     -> Result<(), Error>;
+
+    /// Whether the service is running now.
+    async fn is_active(&self, session: &crate::ssh::Session, name: &str) -> Result<bool, Error>;
+
+    /// Restart the service so it re-reads its unit file and configuration.
+    async fn restart(&self, session: &crate::ssh::Session, name: &str) -> Result<(), Error>;
 }
 
 /// systemd-backed service management (Linux).
@@ -151,6 +157,28 @@ impl ServiceManager for Systemd {
         }
         Ok(())
     }
+
+    async fn is_active(&self, session: &crate::ssh::Session, name: &str) -> Result<bool, Error> {
+        let unit = self.unit_name(name, UnitKind::Service);
+        let output = session
+            .command("systemctl")
+            .arg("is-active")
+            .arg("--quiet")
+            .arg(&unit)
+            .output()
+            .await?;
+        Ok(output.status.success())
+    }
+
+    async fn restart(&self, session: &crate::ssh::Session, name: &str) -> Result<(), Error> {
+        let unit = self.unit_name(name, UnitKind::Service);
+        let output = session.command("systemctl").arg("restart").arg(&unit).output().await?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!("`systemctl restart {unit}` failed: {}", stderr.trim()).into());
+        }
+        Ok(())
+    }
 }
 
 #[cfg(feature = "ssh")]
@@ -197,6 +225,14 @@ impl ServiceManager for Launchd {
         _kind: UnitKind,
         _start: bool,
     ) -> Result<(), Error> {
+        Err(launchd_unsupported())
+    }
+
+    async fn is_active(&self, _session: &crate::ssh::Session, _name: &str) -> Result<bool, Error> {
+        Err(launchd_unsupported())
+    }
+
+    async fn restart(&self, _session: &crate::ssh::Session, _name: &str) -> Result<(), Error> {
         Err(launchd_unsupported())
     }
 }

@@ -40,6 +40,8 @@ pub struct UnitDeps {
     pub after: Vec<usize>,
     /// Units whose failure/skip causes this unit to be skipped (subset of `after`).
     pub requires: Vec<usize>,
+    /// Units whose applied changes trigger this unit's restart (subset of `after`).
+    pub restart_on: Vec<usize>,
 }
 
 /// A validated execution plan over [`State::units`].
@@ -160,6 +162,7 @@ impl State {
         // edges[u] = units that must run before u. requires[u] ⊆ edges[u].
         let mut edges: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); n];
         let mut requires: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); n];
+        let mut restart_on: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); n];
         for (u, unit) in self.units.iter().enumerate() {
             for name in &unit.after {
                 edges[u].insert(resolve(unit, name)?);
@@ -174,10 +177,16 @@ impl State {
                 let target = resolve(unit, name)?;
                 edges[target].insert(u);
             }
-            // Ordering the rules themselves imply. These are always qualified,
-            // and a reference to a unit the config does not declare is not an
-            // error — it names a resource that is not cook's to manage.
             for rule in &self.host_rules[unit.rules.clone()] {
+                // A restart has to see the change it reacts to, so it implies `after`.
+                for name in rule.restart_on() {
+                    let dep = resolve(unit, name)?;
+                    edges[u].insert(dep);
+                    restart_on[u].insert(dep);
+                }
+                // Ordering the rules themselves imply. These are always qualified,
+                // and a reference to a unit the config does not declare is not an
+                // error — it names a resource that is not cook's to manage.
                 for name in rule.implied_after() {
                     if let Some((kind, unqualified)) = name.split_once(':')
                         && let Some(&dep) = qualified.get(&(kind, unqualified))
@@ -226,6 +235,7 @@ impl State {
             .map(|u| UnitDeps {
                 after: edges[u].iter().copied().collect(),
                 requires: requires[u].iter().copied().collect(),
+                restart_on: restart_on[u].iter().copied().collect(),
             })
             .collect();
         Ok(Schedule { topo_order, deps })

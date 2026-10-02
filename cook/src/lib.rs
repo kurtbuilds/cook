@@ -60,6 +60,14 @@ pub trait Rule: erased_serde::Serialize + std::fmt::Debug + Send + Sync + 'stati
     fn implied_after(&self) -> Vec<String> {
         Vec::new()
     }
+    /// Units whose changes this rule reacts to, as written in the config
+    /// (bare or `kind:name`). Each one is ordered before this rule, and
+    /// [`RuleOverSsh::check_ssh_with`] learns whether any of them applied a
+    /// change in this run. Unlike [`Rule::implied_after`], an unknown name is
+    /// an error: a typo would otherwise silently never trigger.
+    fn restart_on(&self) -> &[String] {
+        &[]
+    }
     /// check the rule
     fn check(&self) -> Result<Vec<Box<dyn Modification>>, Error>;
 }
@@ -69,6 +77,19 @@ pub trait RuleOverSsh: Rule {
     /// check the rule over ssh
     #[cfg(feature = "ssh")]
     async fn check_ssh(&self, session: &crate::ssh::Session) -> Result<Vec<Box<dyn Modification>>, Error>;
+
+    /// check the rule over ssh, given whether a unit in [`Rule::restart_on`]
+    /// applied a change earlier in this run. Rules that don't react to other
+    /// units ignore the flag.
+    #[cfg(feature = "ssh")]
+    async fn check_ssh_with(
+        &self,
+        session: &crate::ssh::Session,
+        restart_on_changed: bool,
+    ) -> Result<Vec<Box<dyn Modification>>, Error> {
+        let _ = restart_on_changed;
+        self.check_ssh(session).await
+    }
 }
 
 /// defines how a rule will be applied to a system/resource

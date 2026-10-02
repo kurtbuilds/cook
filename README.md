@@ -40,6 +40,21 @@ Run a rule as a one-off:
 cook run package postgresql
 ```
 
+## Restarting services
+
+A running service restarts when its unit file changes, or when a unit named
+in its `restart_on` applies a change in the same run:
+
+```kdl
+cp config/vector.yaml /etc/vector/vector.yaml
+service vector restart_on="file:/etc/vector/vector.yaml"
+```
+
+`restart_on` takes space-separated unit references, like `requires`, and
+orders those units first. The unit file argument is optional. Without it, cook
+does not write or enable the unit (a package already did) and only manages its
+restarts. A stopped service is not restarted.
+
 
 ## Installing the daemon
 
