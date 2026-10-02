@@ -123,7 +123,7 @@ fn cycle_is_rejected() {
 fn unknown_reference_is_rejected() {
     let state = parse("package a {\n  requires nope\n}");
     let err = state.build_schedule().expect_err("unknown ref should be rejected");
-    assert!(err.to_string().contains("unknown unit"), "got: {err}");
+    assert!(err.to_string().contains("unknown rule"), "got: {err}");
 }
 
 #[test]
@@ -166,7 +166,7 @@ fn duplicate_name_within_one_kind_is_still_rejected() {
     let state = parse("package a {\n  name dup\n}\npackage b {\n  name dup\n}");
     let err = state.build_schedule().expect_err("duplicate name should be rejected");
     assert!(
-        err.to_string().contains("duplicate unit name 'package:dup'"),
+        err.to_string().contains("duplicate rule name 'package:dup'"),
         "got: {err}"
     );
 }

@@ -1,6 +1,6 @@
 # SSH concurrency
 
-Cook reuses one authenticated SSH connection per host. Independent units start
+Cook reuses one authenticated SSH connection per host. Independent rules start
 concurrently, without a configured job limit. Commands and SFTP transfers share
 an adaptive Tokio semaphore for session admission.
 

@@ -127,14 +127,14 @@ impl State {
         let mut kinds: BTreeSet<&str> = BTreeSet::new();
         for (i, unit) in self.units.iter().enumerate() {
             if qualified.insert((unit.kind, unit.name.as_str()), i).is_some() {
-                return Err(anyhow::anyhow!("duplicate unit name '{}'", unit.qualified()).into());
+                return Err(anyhow::anyhow!("duplicate rule name '{}'", unit.qualified()).into());
             }
             bare.entry(unit.name.as_str()).or_default().push(i);
             kinds.insert(unit.kind);
         }
 
         let resolve = |referrer: &Unit, name: &str| -> Result<usize, crate::Error> {
-            let unknown = || anyhow::anyhow!("unit '{}' references unknown unit '{name}'", referrer.qualified()).into();
+            let unknown = || anyhow::anyhow!("rule '{}' references unknown rule '{name}'", referrer.qualified()).into();
             // Treat a `kind:name` reference as qualified only when the prefix is
             // a rule type in play: file units are identified by path, and a path
             // may legitimately contain a colon.
@@ -149,7 +149,7 @@ impl State {
                 Some(candidates) => {
                     let candidates: Vec<String> = candidates.iter().map(|&u| self.units[u].qualified()).collect();
                     Err(anyhow::anyhow!(
-                        "unit '{}' references '{name}', which is ambiguous between {}; qualify the reference",
+                        "rule '{}' references '{name}', which is ambiguous between {}; qualify the reference",
                         referrer.qualified(),
                         candidates.join(", ")
                     )
@@ -200,7 +200,7 @@ impl State {
         }
         for (u, unit) in self.units.iter().enumerate() {
             if edges[u].contains(&u) {
-                return Err(anyhow::anyhow!("unit '{}' depends on itself", unit.qualified()).into());
+                return Err(anyhow::anyhow!("rule '{}' depends on itself", unit.qualified()).into());
             }
         }
 
@@ -228,7 +228,7 @@ impl State {
                 .filter(|&u| in_degree[u] > 0)
                 .map(|u| self.units[u].qualified())
                 .collect();
-            return Err(anyhow::anyhow!("dependency cycle detected among units: {}", cyclic.join(", ")).into());
+            return Err(anyhow::anyhow!("dependency cycle detected among rules: {}", cyclic.join(", ")).into());
         }
 
         let deps = (0..n)

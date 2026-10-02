@@ -169,10 +169,10 @@ pub async fn run_over_ssh(cli: &Cli, session: Session, state: &State, host: &str
             let qualified = units[u].qualified();
             tasks.push(
                 async move {
-                    debug!(unit = %qualified, "Starting unit");
+                    debug!(rule = %qualified, "Checking rule");
                     let outcome = match run_unit_rules(cli, state, session, range, restart_on_changed).await {
                         Ok(outputs) => UnitOutcome::Done(Arc::new(outputs)),
-                        Err(e) => UnitOutcome::Failed(Arc::from(format!("unit '{qualified}': {e}"))),
+                        Err(e) => UnitOutcome::Failed(Arc::from(format!("rule '{qualified}': {e}"))),
                     };
                     vec![(u, outcome)]
                 }
@@ -202,7 +202,7 @@ pub async fn run_over_ssh(cli: &Cli, session: Session, state: &State, host: &str
             UnitOutcome::Skipped => {
                 let skipped = "[skipped]".yellow();
                 eprintln!(
-                    "{skipped} {host}: unit '{}' (required dependency did not complete)",
+                    "{skipped} {host}: rule '{}' (a required rule did not complete)",
                     units[u].qualified()
                 );
             }
@@ -386,7 +386,7 @@ fn package_batch_failed(units: Vec<PackageUnit>, message: String) -> Vec<(usize,
         .map(|unit| {
             (
                 unit.index,
-                UnitOutcome::Failed(Arc::from(format!("unit '{}': {message}", unit.qualified))),
+                UnitOutcome::Failed(Arc::from(format!("rule '{}': {message}", unit.qualified))),
             )
         })
         .collect()
@@ -442,7 +442,6 @@ async fn run_unit_rules(
     let mut outputs = Vec::new();
     for i in range {
         let rule = &rules[i];
-        debug!(rule_id = rule.identifier(), "Checking rule");
         let rule = rule
             .downcast_ssh()
             .ok_or_else(|| cook::Error::from("rule cannot run over ssh"))?;
