@@ -8,6 +8,7 @@ mod seq;
 mod service;
 #[cfg(feature = "ssh")]
 pub mod ssh;
+mod tombstone;
 mod user;
 mod which;
 
@@ -26,8 +27,8 @@ pub use global_state::{Schedule, State, Unit, UnitDeps};
 pub use seq::{SEQUENCING_KEYWORDS, Sequencing};
 
 use crate::{
-    file::spec::FileSpec, package::spec::PackageSpec, service::spec::ServiceSpec, user::spec::UserSpec,
-    which::spec::WhichSpec,
+    file::spec::FileSpec, package::spec::PackageSpec, service::spec::ServiceSpec, tombstone::Tombstone,
+    user::spec::UserSpec, which::spec::WhichSpec,
 };
 
 pub trait FromKdl {
@@ -136,4 +137,5 @@ pub fn add_kdl_deserializers_to_context(cx: &mut Context) {
     cx.add_deserializers_for_keywords(UserSpec::kdl_keywords(), UserSpec::add_rules_to_state);
     cx.add_deserializers_for_keywords(WhichSpec::kdl_keywords(), WhichSpec::add_rules_to_state);
     cx.add_deserializers_for_keywords(PackageSpec::kdl_keywords(), PackageSpec::add_rules_to_state);
+    cx.add_deserializers_for_keywords(Tombstone::kdl_keywords(), Tombstone::add_rules_to_state);
 }

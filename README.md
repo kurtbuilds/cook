@@ -55,6 +55,22 @@ orders those rules first. The unit file argument is optional. Without it, cook
 does not write or enable the unit (a package already did) and only manages its
 restarts. A stopped service is not restarted.
 
+## Removing services
+
+Cook keeps no record of what it applied, so deleting a `service` line leaves
+its units on the host. To remove them, replace the line with a tombstone:
+
+```kdl
+tombstone service update-market-close
+```
+
+Cook stops and disables the service and its timer, deletes their unit files
+from `/etc/systemd/system`, and reloads systemd. When neither file exists, the
+rule does nothing, so the line can stay until every host has applied it.
+Binaries, working directories, and state directories stay; remove them
+separately. A config cannot have both `service foo` and `tombstone service foo`.
+Only `service` can be tombstoned for now.
+
 
 ## Installing the daemon
 

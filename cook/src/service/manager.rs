@@ -16,7 +16,7 @@ use crate::Error;
 
 /// The kind of unit file being managed. Names map to the platform's conventions
 /// in [`ServiceManager::unit_path`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum UnitKind {
     Service,
     Timer,
@@ -92,6 +92,10 @@ pub trait ServiceManager: Send + Sync {
 
     /// Restart the service so it re-reads its unit file and configuration.
     async fn restart(&self, session: &crate::ssh::Session, name: &str) -> Result<(), Error>;
+
+    /// Stop and disable the given units of `name`, then delete their unit
+    /// files. `kinds` lists only the units whose files exist.
+    async fn remove(&self, session: &crate::ssh::Session, name: &str, kinds: &[UnitKind]) -> Result<(), Error>;
 }
 
 /// systemd-backed service management (Linux).
@@ -179,6 +183,37 @@ impl ServiceManager for Systemd {
         }
         Ok(())
     }
+
+    async fn remove(&self, session: &crate::ssh::Session, name: &str, kinds: &[UnitKind]) -> Result<(), Error> {
+        let units: Vec<String> = kinds.iter().map(|kind| self.unit_name(name, *kind)).collect();
+        let output = session
+            .command("systemctl")
+            .arg("disable")
+            .arg("--now")
+            .args(&units)
+            .output()
+            .await?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let units = units.join(" ");
+            return Err(anyhow::anyhow!("`systemctl disable --now {units}` failed: {}", stderr.trim()).into());
+        }
+        let paths: Vec<String> = kinds.iter().map(|kind| self.unit_path(name, *kind)).collect();
+        if !session.command("rm").arg("-f").args(&paths).status().await?.success() {
+            return Err(anyhow::anyhow!("failed to delete {}", paths.join(" ")).into());
+        }
+        self.reload(session).await?;
+        // Clears a failed state that would keep the unit listed by `systemctl
+        // --failed`. It exits non-zero when the unit is no longer loaded, which
+        // is the usual case, so its status is ignored.
+        session
+            .command("systemctl")
+            .arg("reset-failed")
+            .args(&units)
+            .output()
+            .await?;
+        Ok(())
+    }
 }
 
 #[cfg(feature = "ssh")]
@@ -233,6 +268,10 @@ impl ServiceManager for Launchd {
     }
 
     async fn restart(&self, _session: &crate::ssh::Session, _name: &str) -> Result<(), Error> {
+        Err(launchd_unsupported())
+    }
+
+    async fn remove(&self, _session: &crate::ssh::Session, _name: &str, _kinds: &[UnitKind]) -> Result<(), Error> {
         Err(launchd_unsupported())
     }
 }
